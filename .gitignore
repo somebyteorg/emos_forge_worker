@@ -1,0 +1,8 @@
+.idea
+.env
+/dist/
+/tmp/
+/forge-worker
+*.db
+*.db-shm
+*.db-wal

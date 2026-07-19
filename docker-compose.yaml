@@ -1,0 +1,39 @@
+name: emos-forge-worker
+
+services:
+  worker:
+    image: emos-forge-worker:${VERSION:-260717}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-260717}
+        BUILD_TIME: ${BUILD_TIME:-}
+        PACKAGER_VERSION: ${PACKAGER_VERSION:-3.9.1}
+    container_name: emos-forge-worker
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      EMOS_URL: ${EMOS_URL:?EMOS_URL is required}
+      EMOS_TOKEN: ${EMOS_TOKEN:?EMOS_TOKEN is required}
+      EMOS_FORGE_WORKER_ID: ${EMOS_FORGE_WORKER_ID:?EMOS_FORGE_WORKER_ID is required}
+      FORGE_OUTPUT_DIR: /app/output
+      FORGE_CPU_LIMIT: ${FORGE_CPU_LIMIT:-4}
+      FORGE_ENCRYPTION_MODE: ${FORGE_ENCRYPTION_MODE:-clearkey}
+      FORGE_SPRITE_FRAME_FORMAT: ${FORGE_SPRITE_FRAME_FORMAT:-png}
+      FORGE_HTTP_TIMEOUT: ${FORGE_HTTP_TIMEOUT:-15s}
+      EMOS_UPLOAD_CONCURRENCY: ${EMOS_UPLOAD_CONCURRENCY:-10}
+      EMOS_UPLOAD_RETRY_MAX: ${EMOS_UPLOAD_RETRY_MAX:-3}
+      EMOS_UPLOAD_DELETE_ARTIFACTS: ${EMOS_UPLOAD_DELETE_ARTIFACTS:-false}
+      EMOS_UPLOAD_TITLED_SUBTITLES_ONLY: ${EMOS_UPLOAD_TITLED_SUBTITLES_ONLY:-true}
+      FORGE_FFMPEG_PATH: ffmpeg
+      FORGE_FFPROBE_PATH: ffprobe
+      FORGE_PACKAGER_PATH: packager
+      FORGE_VIPS_PATH: vips
+      TMPDIR: /app/output/.tmp
+      GOTMPDIR: /app/output/.tmp
+    volumes:
+      - ./output:/app/output
+      - ./files:/files:ro
