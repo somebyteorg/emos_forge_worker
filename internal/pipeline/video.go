@@ -15,7 +15,10 @@ import (
 	"forge_worker/internal/task"
 )
 
-const generatedVideoDuration = 10 * time.Second
+const (
+	generatedVideoSegmentDuration = 10 * time.Second
+	generatedVideoGOPDuration     = 2 * time.Second
+)
 
 type generatedVideoArtifact struct {
 	relativePath string
@@ -152,7 +155,7 @@ func (e *Executor) packageSourceVideo(ctx context.Context, request task.Request,
 }
 
 func generatedVideoTiming() (time.Duration, float64) {
-	return generatedVideoDuration, seconds(generatedVideoDuration)
+	return generatedVideoSegmentDuration, seconds(generatedVideoGOPDuration)
 }
 
 func applyGeneratedVideoFrameRate(profile media.VideoProfile, source media.VideoStream) media.VideoProfile {

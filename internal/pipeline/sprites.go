@@ -42,7 +42,7 @@ func (e *Executor) generateSprites(ctx context.Context, request task.Request, st
 	if err != nil {
 		return err
 	}
-	interval := seconds(generatedVideoDuration)
+	interval := seconds(generatedVideoSegmentDuration)
 	var selectedInput spriteInput
 	var frames []selectedSpriteFrame
 	keyframeFailures := make([]map[string]any, 0, len(spriteInputs))

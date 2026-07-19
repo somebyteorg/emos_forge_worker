@@ -231,7 +231,7 @@ func TestExecutorGeneratesSpritesFromGenerated720pIntermediate(t *testing.T) {
 		if index == 1 {
 			wantProfile = "video_720p.mp4"
 		}
-		for _, want := range []string{wantProfile, "expr:gte(t,n_forced*10)", "-flags +cgop", "keyint=240", "open-gop=0", "-threads 5"} {
+		for _, want := range []string{wantProfile, "expr:gte(t,n_forced*2)", "-flags +cgop", "keyint=48", "open-gop=0", "-threads 5"} {
 			if !strings.Contains(joinedArgs, want) {
 				t.Fatalf("generated video args missing %q: %s", want, joinedArgs)
 			}

@@ -48,7 +48,7 @@ func TestExecutorSkipsVideoProfilesThatRequireUpsampling(t *testing.T) {
 	}
 }
 
-func TestExecutorTranscodedVideoUsesFixedTenSecondGOP(t *testing.T) {
+func TestExecutorTranscodedVideoUsesTwoSecondGOPAndTenSecondSegments(t *testing.T) {
 	db := openExecutorDB(t)
 	input := filepath.Join(t.TempDir(), "source.mov")
 	writeTestFile(t, input, []byte("media"))
@@ -70,8 +70,8 @@ func TestExecutorTranscodedVideoUsesFixedTenSecondGOP(t *testing.T) {
 	if !containsArgPair(ffmpegArgs, "-i", packageInput) || !containsArgPair(ffmpegArgs, "-threads", "4") {
 		t.Fatalf("transcode should use package input and full CPU limit: %#v", ffmpegArgs)
 	}
-	if !containsArgPair(ffmpegArgs, "-force_key_frames", "expr:gte(t,n_forced*10)") || !containsArgPair(ffmpegArgs, "-sc_threshold", "0") {
-		t.Fatalf("transcode args did not force a 10 second GOP: %#v", ffmpegArgs)
+	if !containsArgPair(ffmpegArgs, "-force_key_frames", "expr:gte(t,n_forced*2)") || !containsArgPair(ffmpegArgs, "-sc_threshold", "0") || !containsArgPair(ffmpegArgs, "-x264-params", "keyint=48:min-keyint=48:scenecut=0:open-gop=0") {
+		t.Fatalf("transcode args did not force a 2 second closed GOP: %#v", ffmpegArgs)
 	}
 	if len(runner.packagerArgs) != 1 || !containsArgPair(runner.packagerArgs[0], "--segment_duration", "10") {
 		t.Fatalf("packager args did not use 10 second segments: %#v", runner.packagerArgs)
@@ -88,7 +88,7 @@ func TestExecutorTranscodedVideoUsesFixedTenSecondGOP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("videoIntermediateMetadataFromArtifact: %v", err)
 		}
-		if metadata.GOPSeconds != 10 || metadata.SegmentDurationSeconds != 10 {
+		if metadata.GOPSeconds != 2 || metadata.SegmentDurationSeconds != 10 {
 			t.Fatalf("unexpected video metadata: %+v", metadata)
 		}
 		return
