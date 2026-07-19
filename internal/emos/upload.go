@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"forge_worker/internal/httpx"
+
 	"github.com/bdragon300/tusgo"
 	"golang.org/x/sync/errgroup"
 )
@@ -88,6 +90,7 @@ func (u Uploader) UploadManifestAssets(ctx context.Context, opt UploadOptions) e
 	if u.HTTP == nil {
 		u.HTTP = &http.Client{Timeout: 0}
 	}
+	u.HTTP = httpx.UserAgentDoer{Next: u.HTTP}
 	if opt.Concurrency <= 0 {
 		opt.Concurrency = 10
 	}

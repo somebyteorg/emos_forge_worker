@@ -15,5 +15,6 @@ func NewHTTPClient(timeout, connectTimeout time.Duration) *http.Client {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{Timeout: connectTimeout, KeepAlive: 30 * time.Second}).DialContext
-	return &http.Client{Timeout: timeout, Transport: transport}
+	transport.ResponseHeaderTimeout = timeout
+	return &http.Client{Transport: transport}
 }

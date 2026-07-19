@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"forge_worker/internal/httpx"
 )
 
 const (
@@ -303,6 +305,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body []byte, o
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+c.token)
+	httpx.SetUserAgent(request)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

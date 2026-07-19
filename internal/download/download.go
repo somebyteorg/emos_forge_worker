@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"forge_worker/internal/httpx"
 )
 
 type Request struct {
@@ -62,7 +64,6 @@ func (d Downloader) Download(ctx context.Context, request Request) (Result, erro
 	if client == nil {
 		client = http.DefaultClient
 	}
-	metadata, _ := probe(ctx, client, request.URI)
 	partialSize, err := regularFileSize(request.PartialPath)
 	if err != nil {
 		return Result{}, err
@@ -72,62 +73,65 @@ func (d Downloader) Download(ctx context.Context, request Request) (Result, erro
 		return Result{}, err
 	}
 	stalePartial := ""
-	if partialSize > 0 && (!hasPreviousMetadata || !metadata.AcceptRanges || !compatibleMetadata(previousMetadata, metadata)) {
-		name, err := markStale(request.PartialPath)
+	resume := partialSize > 0 && hasPreviousMetadata && previousMetadata.AcceptRanges &&
+		(previousMetadata.ContentLength <= 0 || partialSize < previousMetadata.ContentLength)
+	if partialSize > 0 && !resume {
+		name, err := markDownloadStale(request.PartialPath)
 		if err != nil {
 			return Result{}, err
 		}
 		stalePartial = name
-		_, _ = markStale(metadataPath(request.PartialPath))
 		partialSize = 0
 	}
 
-	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, request.URI, nil)
+	response, err := get(ctx, client, request.URI, partialSize, resume)
 	if err != nil {
 		return Result{}, err
 	}
-	resume := partialSize > 0 && metadata.AcceptRanges && (metadata.ContentLength <= 0 || partialSize < metadata.ContentLength)
+	metadata := metadataFromResponse(response)
 	if resume {
-		getReq.Header.Set("Range", fmt.Sprintf("bytes=%d-", partialSize))
-	}
-	response, err := client.Do(getReq)
-	if err != nil {
-		return Result{}, err
-	}
-	defer response.Body.Close()
-
-	if resume {
-		if response.StatusCode != http.StatusPartialContent || !validContentRange(response.Header.Get("Content-Range"), partialSize, metadata.ContentLength) {
-			name, err := markStale(request.PartialPath)
+		validRange := response.StatusCode == http.StatusPartialContent &&
+			validContentRange(response.Header.Get("Content-Range"), partialSize, previousMetadata.ContentLength) &&
+			compatibleMetadata(previousMetadata, metadata)
+		switch {
+		case validRange:
+			metadata = mergeMetadata(metadata, previousMetadata)
+		case response.StatusCode == http.StatusOK:
+			name, err := markDownloadStale(request.PartialPath)
+			if err != nil {
+				response.Body.Close()
+				return Result{}, err
+			}
+			stalePartial = name
+			partialSize = 0
+			resume = false
+		case response.StatusCode == http.StatusPartialContent:
+			response.Body.Close()
+			name, err := markDownloadStale(request.PartialPath)
 			if err != nil {
 				return Result{}, err
 			}
 			stalePartial = name
-			_, _ = markStale(metadataPath(request.PartialPath))
 			partialSize = 0
 			resume = false
+			response, err = get(ctx, client, request.URI, 0, false)
+			if err != nil {
+				return Result{}, err
+			}
+			metadata = metadataFromResponse(response)
+		default:
 			response.Body.Close()
-			getReq, err = http.NewRequestWithContext(ctx, http.MethodGet, request.URI, nil)
-			if err != nil {
-				return Result{}, err
-			}
-			response, err = client.Do(getReq)
-			if err != nil {
-				return Result{}, err
-			}
-			defer response.Body.Close()
+			return Result{}, fmt.Errorf("download range GET returned HTTP %d", response.StatusCode)
 		}
 	}
+	defer response.Body.Close()
+
 	if !resume && response.StatusCode != http.StatusOK {
 		return Result{}, fmt.Errorf("download GET returned HTTP %d", response.StatusCode)
 	}
 	if resume && response.StatusCode != http.StatusPartialContent {
 		return Result{}, fmt.Errorf("download range GET returned HTTP %d", response.StatusCode)
 	}
-	if metadata.ContentLength <= 0 && response.ContentLength > 0 && !resume {
-		metadata.ContentLength = response.ContentLength
-	}
-	metadata = mergeMetadata(metadata, metadataFromHeaders(response.Header, response.ContentLength))
 	if err := writeMetadata(metadataPath(request.PartialPath), metadata); err != nil {
 		return Result{}, err
 	}
@@ -248,20 +252,27 @@ func mergeMetadata(left, right Metadata) Metadata {
 	return left
 }
 
-func probe(ctx context.Context, client HTTPDoer, uri string) (Metadata, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodHead, uri, nil)
+func get(ctx context.Context, client HTTPDoer, uri string, offset int64, resume bool) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
-		return Metadata{}, err
+		return nil, err
 	}
-	response, err := client.Do(request)
-	if err != nil {
-		return Metadata{}, err
+	httpx.SetUserAgent(request)
+	if resume {
+		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return Metadata{}, fmt.Errorf("download HEAD returned HTTP %d", response.StatusCode)
+	return client.Do(request)
+}
+
+func metadataFromResponse(response *http.Response) Metadata {
+	metadata := metadataFromHeaders(response.Header, response.ContentLength)
+	if response.StatusCode == http.StatusPartialContent {
+		metadata.AcceptRanges = true
+		if total := contentRangeTotal(response.Header.Get("Content-Range")); total > 0 {
+			metadata.ContentLength = total
+		}
 	}
-	return metadataFromHeaders(response.Header, response.ContentLength), nil
+	return metadata
 }
 
 func metadataFromHeaders(header http.Header, contentLength int64) Metadata {
@@ -318,6 +329,27 @@ func validContentRange(value string, start, total int64) bool {
 		}
 	}
 	return true
+}
+
+func contentRangeTotal(value string) int64 {
+	_, totalPart, ok := strings.Cut(strings.TrimSpace(value), "/")
+	if !ok || totalPart == "*" {
+		return 0
+	}
+	total, err := strconv.ParseInt(totalPart, 10, 64)
+	if err != nil || total <= 0 {
+		return 0
+	}
+	return total
+}
+
+func markDownloadStale(partialPath string) (string, error) {
+	name, err := markStale(partialPath)
+	if err != nil {
+		return "", err
+	}
+	_, _ = markStale(metadataPath(partialPath))
+	return name, nil
 }
 
 func markStale(path string) (string, error) {

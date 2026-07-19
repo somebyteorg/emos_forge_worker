@@ -86,3 +86,19 @@ func TestBuildEMOSRequestCreatesSubtitlePackagePlan(t *testing.T) {
 		t.Fatalf("plan does not contain %s: %+v", pipeline.StepSubtitlePackage, plan.Steps)
 	}
 }
+
+func TestBuildEMOSRequestPreservesFileURLQuery(t *testing.T) {
+	input := "https://storage.example.test/source.mkv?token=forge%2Bworker&expires=260720"
+	request, err := buildEMOSRequest(config.Config{OutputDir: "/project/output"}, "019f61e1-eb9d-7a90-adba-3a6f7ecc8611", emos.JobInfo{
+		FileURL: &input,
+		JobSteps: []emos.JobStep{
+			emos.JobStepVideoPackage,
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildEMOSRequest: %v", err)
+	}
+	if request.Input.URI != input {
+		t.Fatalf("input URI = %q, want %q", request.Input.URI, input)
+	}
+}
