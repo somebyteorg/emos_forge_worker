@@ -21,6 +21,7 @@ import (
 const localTaskPollInterval = 500 * time.Millisecond
 const localProgressReportBucket = 5
 const taskPerformanceReportInterval = 10 * time.Second
+const downloadPerformanceReportInterval = 2 * time.Second
 
 type taskSnapshot struct {
 	Task     state.TaskRecord
@@ -191,6 +192,9 @@ func (o *taskObserver) shouldReportStep(current, last state.StepRecord, hadLast 
 			return true
 		}
 		lastReport := o.stepReports[current.Name]
+		if hasStepTransfer(current) {
+			return time.Since(lastReport) >= downloadPerformanceReportInterval
+		}
 		return hasStepPerformance(current) && time.Since(lastReport) >= taskPerformanceReportInterval
 	}
 	return false
@@ -229,15 +233,18 @@ func (o *taskObserver) println(line string) {
 }
 
 func taskProgressDescription(snapshot taskSnapshot) string {
-	description := fmt.Sprintf("%s %s", stateDisplayName(string(snapshot.Task.State)), formatPercent(snapshot.Task.Progress))
+	description := fmt.Sprintf("%s total %s", stateDisplayName(string(snapshot.Task.State)), formatPercent(snapshot.Task.Progress))
 	if step, ok := currentDisplayStep(snapshot.Steps); ok {
+		if hasStepTransfer(step) {
+			description += " download " + formatPercent(step.Progress)
+		}
 		description += formatStepPerformance(step, true)
 	}
 	return description
 }
 
 func hasStepPerformance(step state.StepRecord) bool {
-	return step.FPS > 0 || step.Speed > 0
+	return hasStepTransfer(step) || step.FPS > 0 || step.Speed > 0
 }
 
 func formatStepPerformance(step state.StepRecord, compact bool) string {
@@ -246,6 +253,20 @@ func formatStepPerformance(step state.StepRecord, compact bool) string {
 		separator = " "
 	}
 	result := ""
+	if hasStepTransfer(step) {
+		if step.TotalBytes > 0 {
+			result += separator + formatBytes(step.TransferredBytes) + "/" + formatBytes(step.TotalBytes)
+		} else if step.TransferredBytes > 0 {
+			result += separator + formatBytes(step.TransferredBytes)
+		}
+		if step.BytesPerSecond > 0 {
+			result += separator + formatBytes(int64(step.BytesPerSecond)) + "/s"
+		}
+		if step.ETASeconds > 0 {
+			result += separator + "eta " + formatETA(step.ETASeconds)
+		}
+		return result
+	}
 	if step.FPS > 0 {
 		result += separator + fmt.Sprintf("%.1f fps", step.FPS)
 	}
@@ -253,6 +274,34 @@ func formatStepPerformance(step state.StepRecord, compact bool) string {
 		result += separator + fmt.Sprintf("%.2fx", step.Speed)
 	}
 	return result
+}
+
+func hasStepTransfer(step state.StepRecord) bool {
+	return step.TransferredBytes > 0 || step.TotalBytes > 0 || step.BytesPerSecond > 0 || step.ETASeconds > 0
+}
+
+func formatBytes(value int64) string {
+	if value < 0 {
+		value = 0
+	}
+	units := [...]string{"B", "KiB", "MiB", "GiB", "TiB"}
+	size := float64(value)
+	unit := 0
+	for size >= 1024 && unit < len(units)-1 {
+		size /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d%s", value, units[unit])
+	}
+	return fmt.Sprintf("%.1f%s", size, units[unit])
+}
+
+func formatETA(seconds float64) string {
+	if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return "0s"
+	}
+	return (time.Duration(math.Ceil(seconds)) * time.Second).String()
 }
 
 func taskStatusLine(snapshot taskSnapshot) string {

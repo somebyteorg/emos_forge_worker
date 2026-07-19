@@ -15,18 +15,22 @@ type TaskRecord struct {
 }
 
 type StepRecord struct {
-	Name           string     `json:"name"`
-	Kind           string     `json:"kind"`
-	State          string     `json:"state"`
-	Progress       float64    `json:"progress_percent"`
-	FPS            float64    `json:"fps,omitempty"`
-	Speed          float64    `json:"speed,omitempty"`
-	Attempt        int        `json:"attempt"`
-	MaxAttempts    int        `json:"max_attempts"`
-	CommandSummary string     `json:"command_summary,omitempty"`
-	DetailsJSON    string     `json:"details_json,omitempty"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	Name             string     `json:"name"`
+	Kind             string     `json:"kind"`
+	State            string     `json:"state"`
+	Progress         float64    `json:"progress_percent"`
+	FPS              float64    `json:"fps,omitempty"`
+	Speed            float64    `json:"speed,omitempty"`
+	TransferredBytes int64      `json:"transferred_bytes,omitempty"`
+	TotalBytes       int64      `json:"total_bytes,omitempty"`
+	BytesPerSecond   float64    `json:"bytes_per_second,omitempty"`
+	ETASeconds       float64    `json:"eta_seconds,omitempty"`
+	Attempt          int        `json:"attempt"`
+	MaxAttempts      int        `json:"max_attempts"`
+	CommandSummary   string     `json:"command_summary,omitempty"`
+	DetailsJSON      string     `json:"details_json,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
 }
 
 type StepCommandRecord struct {

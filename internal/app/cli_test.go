@@ -328,6 +328,32 @@ func TestLocalCommandSummaryShowsHumanPrefixForCustomCommands(t *testing.T) {
 	}
 }
 
+func TestStepStatusLineFormatsDownloadProgress(t *testing.T) {
+	line := stepStatusLine(state.StepRecord{
+		Name: "download_url", State: string(task.StepRunning), Progress: 40,
+		TransferredBytes: 4 << 20, TotalBytes: 10 << 20, BytesPerSecond: 2 << 20, ETASeconds: 4.2,
+		Attempt: 1, MaxAttempts: 3,
+	})
+	want := "step download_url | running | 40.0% | 4.0MiB/10.0MiB | 2.0MiB/s | eta 5s | attempt 1/3"
+	if line != want {
+		t.Fatalf("line = %q, want %q", line, want)
+	}
+}
+
+func TestTaskProgressDescriptionLabelsDownloadPercent(t *testing.T) {
+	description := taskProgressDescription(taskSnapshot{
+		Task: state.TaskRecord{State: task.StateDownloading, Progress: 4},
+		Steps: []state.StepRecord{{
+			Name: "download_url", State: string(task.StepRunning), Progress: 40,
+			TransferredBytes: 4 << 20, TotalBytes: 10 << 20, BytesPerSecond: 2 << 20, ETASeconds: 3,
+		}},
+	})
+	want := "downloading total 4.0% download 40.0% 4.0MiB/10.0MiB 2.0MiB/s eta 3s"
+	if description != want {
+		t.Fatalf("description = %q, want %q", description, want)
+	}
+}
+
 func TestLocalCommandSupportsScriptFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd := newLocalCommand(context.Background(), &stdout, &stderr)

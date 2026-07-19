@@ -254,6 +254,10 @@ func (d *DB) StartStep(ctx context.Context, taskUUID, name string) error {
 	step.record.Progress = 0
 	step.record.FPS = 0
 	step.record.Speed = 0
+	step.record.TransferredBytes = 0
+	step.record.TotalBytes = 0
+	step.record.BytesPerSecond = 0
+	step.record.ETASeconds = 0
 	step.record.DetailsJSON = ""
 	step.record.Attempt++
 	if step.record.StartedAt == nil {
@@ -306,6 +310,43 @@ func (d *DB) UpdateStepPerformance(ctx context.Context, taskUUID, name string, f
 	}
 	step.record.FPS = fps
 	step.record.Speed = speed
+	return nil
+}
+
+func (d *DB) UpdateStepTransfer(ctx context.Context, taskUUID, name string, progress float64, transferredBytes, totalBytes int64, bytesPerSecond, etaSeconds float64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if transferredBytes < 0 {
+		transferredBytes = 0
+	}
+	if totalBytes < 0 {
+		totalBytes = 0
+	}
+	if math.IsNaN(bytesPerSecond) || math.IsInf(bytesPerSecond, 0) || bytesPerSecond < 0 {
+		bytesPerSecond = 0
+	}
+	if math.IsNaN(etaSeconds) || math.IsInf(etaSeconds, 0) || etaSeconds < 0 {
+		etaSeconds = 0
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	data, step, err := d.stepLocked(taskUUID, name)
+	if err != nil {
+		return err
+	}
+	if step.record.State != string(task.StepRunning) {
+		return nil
+	}
+	progress = clampPercent(progress)
+	if step.record.Progress < progress {
+		step.record.Progress = progress
+		recalculateTaskProgress(data)
+	}
+	step.record.TransferredBytes = transferredBytes
+	step.record.TotalBytes = totalBytes
+	step.record.BytesPerSecond = bytesPerSecond
+	step.record.ETASeconds = etaSeconds
 	return nil
 }
 

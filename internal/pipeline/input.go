@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"forge_worker/internal/download"
 	"forge_worker/internal/media"
@@ -55,6 +56,13 @@ func (e *Executor) downloadURL(ctx context.Context, request task.Request) error 
 		URI:         request.Input.URI,
 		PartialPath: downloadedInputPath(request) + ".partial",
 		FinalPath:   downloadedInputPath(request),
+		OnProgress: func(progress download.Progress) {
+			updateCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = e.repo.UpdateStepTransfer(updateCtx, request.TaskUUID, StepDownloadURL,
+				progress.Percent, progress.DownloadedBytes, progress.TotalBytes,
+				progress.BytesPerSecond, progress.EstimatedRemaining.Seconds())
+		},
 	})
 	if err != nil {
 		return task.NewError(task.ErrDownloadFailed, err.Error(), true)

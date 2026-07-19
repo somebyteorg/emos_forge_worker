@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDownloadFreshFile(t *testing.T) {
 	root := t.TempDir()
 	requests := 0
+	var progressUpdates []Progress
 	client := &http.Client{Transport: downloadRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
 		if r.Method != http.MethodGet {
@@ -34,6 +36,7 @@ func TestDownloadFreshFile(t *testing.T) {
 		URI:         "https://example.test/movie.mkv?token=a%2Bb&expires=123",
 		PartialPath: filepath.Join(root, "input.mkv.partial"),
 		FinalPath:   filepath.Join(root, "input.mkv"),
+		OnProgress:  func(progress Progress) { progressUpdates = append(progressUpdates, progress) },
 	})
 	if err != nil {
 		t.Fatalf("Download: %v", err)
@@ -43,6 +46,16 @@ func TestDownloadFreshFile(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
+	}
+	if len(progressUpdates) < 2 {
+		t.Fatalf("progress updates = %+v", progressUpdates)
+	}
+	first, last := progressUpdates[0], progressUpdates[len(progressUpdates)-1]
+	if first.DownloadedBytes != 0 || first.TotalBytes != 11 || first.Percent != 0 {
+		t.Fatalf("initial progress = %+v", first)
+	}
+	if last.DownloadedBytes != 11 || last.TotalBytes != 11 || last.Percent != 100 || last.BytesPerSecond <= 0 || last.EstimatedRemaining != 0 {
+		t.Fatalf("final progress = %+v", last)
 	}
 	assertFile(t, filepath.Join(root, "input.mkv"), "hello world")
 	assertFileExists(t, filepath.Join(root, "input.mkv.metadata.json"))
@@ -69,11 +82,13 @@ func TestDownloadResumesPartialFile(t *testing.T) {
 		}
 		return downloadResponse(http.StatusPartialContent, []byte("world"), http.Header{"Content-Range": {"bytes 6-10/11"}, "Content-Length": {"5"}, "Accept-Ranges": {"bytes"}, "ETag": {`"v1"`}}), nil
 	})}
+	var progressUpdates []Progress
 
 	result, err := (Downloader{HTTP: client}).Download(context.Background(), Request{
 		URI:         "https://example.test/movie.mkv",
 		PartialPath: partial,
 		FinalPath:   filepath.Join(root, "input.mkv"),
+		OnProgress:  func(progress Progress) { progressUpdates = append(progressUpdates, progress) },
 	})
 	if err != nil {
 		t.Fatalf("Download: %v", err)
@@ -81,7 +96,17 @@ func TestDownloadResumesPartialFile(t *testing.T) {
 	if !result.Resumed || result.Bytes != 11 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	if len(progressUpdates) < 2 || progressUpdates[0].DownloadedBytes != 6 || progressUpdates[0].Percent < 54 || progressUpdates[len(progressUpdates)-1].Percent != 100 {
+		t.Fatalf("resume progress updates = %+v", progressUpdates)
+	}
 	assertFile(t, filepath.Join(root, "input.mkv"), "hello world")
+}
+
+func TestCalculateProgressIncludesSpeedAndETA(t *testing.T) {
+	progress := calculateProgress(40, 100, 20, 2*time.Second)
+	if progress.Percent != 40 || progress.BytesPerSecond != 10 || progress.EstimatedRemaining != 6*time.Second {
+		t.Fatalf("progress = %+v", progress)
+	}
 }
 
 func TestDownloadMarksChangedPartialStale(t *testing.T) {

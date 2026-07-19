@@ -19,6 +19,15 @@ type Request struct {
 	URI         string
 	PartialPath string
 	FinalPath   string
+	OnProgress  func(Progress)
+}
+
+type Progress struct {
+	DownloadedBytes    int64
+	TotalBytes         int64
+	Percent            float64
+	BytesPerSecond     float64
+	EstimatedRemaining time.Duration
 }
 
 type Metadata struct {
@@ -146,7 +155,10 @@ func (d Downloader) Download(ctx context.Context, request Request) (Result, erro
 	if err != nil {
 		return Result{}, fmt.Errorf("open partial download: %w", err)
 	}
-	written, copyErr := copyContext(ctx, file, response.Body)
+	progress := newProgressReporter(partialSize, metadata.ContentLength, request.OnProgress)
+	progress.report(true)
+	written, copyErr := copyContext(ctx, file, response.Body, progress.add)
+	progress.report(true)
 	if syncErr := file.Sync(); syncErr != nil && copyErr == nil {
 		copyErr = syncErr
 	}
@@ -365,7 +377,65 @@ func markStale(path string) (string, error) {
 	return stale, nil
 }
 
-func copyContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+const downloadProgressInterval = 250 * time.Millisecond
+
+type progressReporter struct {
+	initialBytes int64
+	totalBytes   int64
+	downloaded   int64
+	startedAt    time.Time
+	lastReport   time.Time
+	onProgress   func(Progress)
+}
+
+func newProgressReporter(initialBytes, totalBytes int64, onProgress func(Progress)) *progressReporter {
+	now := time.Now()
+	return &progressReporter{
+		initialBytes: initialBytes,
+		totalBytes:   totalBytes,
+		startedAt:    now,
+		lastReport:   now,
+		onProgress:   onProgress,
+	}
+}
+
+func (r *progressReporter) add(bytes int64) {
+	if r == nil || bytes <= 0 {
+		return
+	}
+	r.downloaded += bytes
+	r.report(false)
+}
+
+func (r *progressReporter) report(force bool) {
+	if r == nil || r.onProgress == nil {
+		return
+	}
+	now := time.Now()
+	if !force && now.Sub(r.lastReport) < downloadProgressInterval {
+		return
+	}
+	r.lastReport = now
+	r.onProgress(calculateProgress(r.initialBytes+r.downloaded, r.totalBytes, r.downloaded, now.Sub(r.startedAt)))
+}
+
+func calculateProgress(downloadedBytes, totalBytes, transferredBytes int64, elapsed time.Duration) Progress {
+	progress := Progress{DownloadedBytes: downloadedBytes, TotalBytes: totalBytes}
+	if totalBytes > 0 {
+		progress.Percent = float64(downloadedBytes) * 100 / float64(totalBytes)
+		progress.Percent = min(100, max(0, progress.Percent))
+	}
+	if transferredBytes > 0 && elapsed > 0 {
+		progress.BytesPerSecond = float64(transferredBytes) / elapsed.Seconds()
+	}
+	remainingBytes := totalBytes - downloadedBytes
+	if remainingBytes > 0 && progress.BytesPerSecond > 0 {
+		progress.EstimatedRemaining = time.Duration(float64(remainingBytes) / progress.BytesPerSecond * float64(time.Second))
+	}
+	return progress
+}
+
+func copyContext(ctx context.Context, dst io.Writer, src io.Reader, onWrite func(int64)) (int64, error) {
 	buffer := make([]byte, 128*1024)
 	var written int64
 	for {
@@ -381,6 +451,9 @@ func copyContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, erro
 			}
 			if n != count {
 				return written, io.ErrShortWrite
+			}
+			if onWrite != nil {
+				onWrite(int64(n))
 			}
 		}
 		if readErr == io.EOF {

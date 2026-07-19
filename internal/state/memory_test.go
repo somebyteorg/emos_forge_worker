@@ -120,6 +120,32 @@ func TestTaskProgressProbeAndFinish(t *testing.T) {
 	}
 }
 
+func TestUpdateStepTransferStoresDownloadMetrics(t *testing.T) {
+	db := New()
+	request := testRequest()
+	ctx := context.Background()
+	if _, err := db.EnsureTask(ctx, request, task.StateDiscovered); err != nil {
+		t.Fatalf("EnsureTask: %v", err)
+	}
+	if err := db.EnsureSteps(ctx, request.TaskUUID, []StepSpec{{Name: "download_url", Kind: "download", Weight: 1, MaxAttempts: 3}}); err != nil {
+		t.Fatalf("EnsureSteps: %v", err)
+	}
+	if err := db.StartStep(ctx, request.TaskUUID, "download_url"); err != nil {
+		t.Fatalf("StartStep: %v", err)
+	}
+	if err := db.UpdateStepTransfer(ctx, request.TaskUUID, "download_url", 40, 4<<20, 10<<20, 2<<20, 3); err != nil {
+		t.Fatalf("UpdateStepTransfer: %v", err)
+	}
+	steps, err := db.ListSteps(ctx, request.TaskUUID)
+	if err != nil {
+		t.Fatalf("ListSteps: %v", err)
+	}
+	step := steps[0]
+	if step.Progress != 40 || step.TransferredBytes != 4<<20 || step.TotalBytes != 10<<20 || step.BytesPerSecond != 2<<20 || step.ETASeconds != 3 {
+		t.Fatalf("step = %+v", step)
+	}
+}
+
 func TestEnsureStepsDoesNotPartiallyApplyInvalidPlan(t *testing.T) {
 	db := New()
 	request := testRequest()
