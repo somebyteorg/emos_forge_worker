@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -257,12 +261,27 @@ func (e *Executor) generateSpritesFromFrameDirectories(ctx context.Context, requ
 func (e *Executor) assembleSpriteSheetFromFrames(ctx context.Context, request task.Request, stepName string, group []spriteSize, inputs []string, sheetIndex, frameStart int, sheetFrames []selectedSpriteFrame, interval float64, masterMode, resizedMode string, progress *spriteCommandProgress) ([]state.ArtifactSpec, error) {
 	master := group[0]
 	frameCount := len(sheetFrames)
+	gridColumns := request.Steps.Sprites.Columns
+	gridRows := request.Steps.Sprites.Rows
+	if len(inputs) == 0 {
+		return nil, task.NewError(task.ErrSpriteGenerationFailed, "sprite grid inputs are required", false)
+	}
+	paddingInput := filepath.Join(filepath.Dir(inputs[0]), ".padding.png")
+	gridInputs, err := padSpriteGridInputs(inputs, gridColumns, gridRows, paddingInput)
+	if err != nil {
+		return nil, task.NewError(task.ErrSpriteGenerationFailed, err.Error(), false)
+	}
+	if len(gridInputs) > len(inputs) {
+		if err := writeBlackSpriteFrame(paddingInput, master.Width, master.Height); err != nil {
+			return nil, task.NewError(task.ErrSpriteGenerationFailed, err.Error(), true)
+		}
+	}
 	masterRelativePath := filepath.ToSlash(filepath.Join("sprites", master.Name, fmt.Sprintf("sprite_%04d.avif", sheetIndex+1)))
 	masterOutputPath := filepath.Join(taskRoot(request), filepath.FromSlash(masterRelativePath))
 	if err := os.MkdirAll(filepath.Dir(masterOutputPath), 0o700); err != nil {
 		return nil, task.NewError(task.ErrSpriteGenerationFailed, err.Error(), true)
 	}
-	joinArgs, err := media.BuildVipsArrayJoinArgs(media.VipsJoinSpec{Inputs: inputs, Output: masterOutputPath, Columns: request.Steps.Sprites.Columns, Quality: request.Steps.Sprites.Quality, Effort: request.Steps.Sprites.Effort})
+	joinArgs, err := media.BuildVipsArrayJoinArgs(media.VipsJoinSpec{Inputs: gridInputs, Output: masterOutputPath, Columns: gridColumns, Quality: request.Steps.Sprites.Quality, Effort: request.Steps.Sprites.Effort})
 	if err != nil {
 		return nil, task.NewError(task.ErrSpriteGenerationFailed, err.Error(), false)
 	}
@@ -272,9 +291,8 @@ func (e *Executor) assembleSpriteSheetFromFrames(ctx context.Context, request ta
 	if err := appendForgeUUIDTags(request, []string{masterOutputPath}, task.ErrSpriteGenerationFailed); err != nil {
 		return nil, err
 	}
-	rows := (frameCount + request.Steps.Sprites.Columns - 1) / request.Steps.Sprites.Columns
 	timestamps := spriteTimestamps(sheetFrames)
-	specs := []state.ArtifactSpec{spriteArtifactSpec(stepName, master, masterRelativePath, request.Steps.Sprites.Columns, request.Steps.Sprites.Rows, rows, frameStart, frameCount, interval, timestamps, masterMode)}
+	specs := []state.ArtifactSpec{spriteArtifactSpec(stepName, master, masterRelativePath, gridColumns, gridRows, frameStart, frameCount, interval, timestamps, masterMode)}
 	for _, size := range group[1:] {
 		relativePath := filepath.ToSlash(filepath.Join("sprites", size.Name, fmt.Sprintf("sprite_%04d.avif", sheetIndex+1)))
 		outputPath := filepath.Join(taskRoot(request), filepath.FromSlash(relativePath))
@@ -294,15 +312,56 @@ func (e *Executor) assembleSpriteSheetFromFrames(ctx context.Context, request ta
 		if err := appendForgeUUIDTags(request, []string{outputPath}, task.ErrSpriteGenerationFailed); err != nil {
 			return nil, err
 		}
-		specs = append(specs, spriteArtifactSpec(stepName, size, relativePath, request.Steps.Sprites.Columns, request.Steps.Sprites.Rows, rows, frameStart, frameCount, interval, timestamps, resizedMode))
+		specs = append(specs, spriteArtifactSpec(stepName, size, relativePath, gridColumns, gridRows, frameStart, frameCount, interval, timestamps, resizedMode))
 	}
 	return specs, nil
 }
 
-func spriteArtifactSpec(stepName string, size spriteSize, relativePath string, columns, gridRows, rows, frameStart, frameCount int, interval float64, timestamps []float64, mode string) state.ArtifactSpec {
+func padSpriteGridInputs(inputs []string, columns, rows int, paddingInput string) ([]string, error) {
+	if len(inputs) == 0 || columns <= 0 || rows <= 0 {
+		return nil, fmt.Errorf("sprite grid inputs, columns, and rows are required")
+	}
+	capacity := columns * rows
+	if capacity/columns != rows || len(inputs) > capacity {
+		return nil, fmt.Errorf("sprite frame count %d exceeds grid capacity %dx%d", len(inputs), columns, rows)
+	}
+	if len(inputs) < capacity && paddingInput == "" {
+		return nil, fmt.Errorf("sprite grid padding input is required")
+	}
+	padded := make([]string, capacity)
+	copy(padded, inputs)
+	for index := len(inputs); index < capacity; index++ {
+		padded[index] = paddingInput
+	}
+	return padded, nil
+}
+
+func writeBlackSpriteFrame(path string, width, height int) error {
+	if path == "" || width <= 0 || height <= 0 {
+		return fmt.Errorf("sprite padding path, width, and height are required")
+	}
+	frame := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(frame, frame.Bounds(), image.NewUniform(color.Black), image.Point{}, draw.Src)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create sprite padding frame: %w", err)
+	}
+	if err := png.Encode(file, frame); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("encode sprite padding frame: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("close sprite padding frame: %w", err)
+	}
+	return nil
+}
+
+func spriteArtifactSpec(stepName string, size spriteSize, relativePath string, columns, rows, frameStart, frameCount int, interval float64, timestamps []float64, mode string) state.ArtifactSpec {
 	metadata := spriteMetadata{
 		MediaID: spriteMediaID(size), Path: relativePath, Width: size.Width * columns, Height: size.Height * rows,
-		CellWidth: size.Width, CellHeight: size.Height, Columns: columns, Rows: rows, GridRows: gridRows,
+		CellWidth: size.Width, CellHeight: size.Height, Columns: columns, Rows: rows, GridRows: rows,
 		FrameStart: frameStart, FrameCount: frameCount, FirstTimestampSeconds: timestamps[0],
 		LastTimestampSeconds: timestamps[len(timestamps)-1], IntervalSeconds: interval, Mode: mode, TimestampsSeconds: timestamps,
 	}
