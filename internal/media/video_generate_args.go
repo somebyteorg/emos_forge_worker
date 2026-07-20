@@ -79,7 +79,7 @@ func videoFilterChain(output VideoGenerateOutput) []string {
 		filters = append(filters, "fps="+trimFloat(profile.FrameRate))
 	}
 	if output.ToneMap {
-		filters = append(filters, "zscale=t=linear:npl=100", "tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv")
+		filters = append(filters, hdrToSDRFilterChain()...)
 	}
 	filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2", profile.Width, profile.Height))
 	return filters
@@ -107,6 +107,14 @@ func generatedVideoOutputArgs(output VideoGenerateOutput) ([]string, error) {
 		"-bufsize", bitrateArg(profile.BufferSize),
 		"-preset", videoPreset(profile),
 	)
+	if output.ToneMap {
+		args = append(args,
+			"-color_primaries", "bt709",
+			"-color_trc", "bt709",
+			"-colorspace", "bt709",
+			"-color_range", "tv",
+		)
+	}
 	if output.GOPSeconds > 0 {
 		args = append(args,
 			"-force_key_frames", "expr:gte(t,n_forced*"+trimFloat(output.GOPSeconds)+")",
@@ -127,6 +135,14 @@ func generatedVideoOutputArgs(output VideoGenerateOutput) ([]string, error) {
 		}
 	}
 	return args, nil
+}
+
+func hdrToSDRFilterChain() []string {
+	return []string{
+		"zscale=t=linear:npl=100",
+		"tonemap=hable:desat=0",
+		"zscale=t=bt709:m=bt709:p=bt709:r=tv",
+	}
 }
 
 func videoPreset(profile VideoProfile) string {

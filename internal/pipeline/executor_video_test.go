@@ -114,7 +114,11 @@ func TestExecutorConvertsHDR720pToEightBitSDR(t *testing.T) {
 		t.Fatalf("expected one video transcode command, got %d", len(runner.ffmpegVideoTranscodeArgs))
 	}
 	joined := strings.Join(runner.ffmpegVideoTranscodeArgs[0], " ")
-	for _, want := range []string{"tonemap=hable", "-c:v libx264", "-profile:v high", "-pix_fmt yuv420p"} {
+	for _, want := range []string{
+		"tonemap=hable", "zscale=t=bt709:m=bt709:p=bt709:r=tv",
+		"-c:v libx264", "-profile:v high", "-pix_fmt yuv420p",
+		"-color_primaries bt709", "-color_trc bt709", "-colorspace bt709", "-color_range tv",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("HDR 720p transcode args missing %q: %s", want, joined)
 		}

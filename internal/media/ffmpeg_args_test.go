@@ -186,7 +186,11 @@ func TestBuildVideoGenerateArgsToneMapsCompatibilityOutput(t *testing.T) {
 		t.Fatalf("BuildVideoGenerateArgs: %v", err)
 	}
 	joined := strings.Join(args, " ")
-	for _, value := range []string{"zscale=t=linear:npl=100", "tonemap=hable", "zscale=t=bt709:m=bt709:r=tv", "-c:v libx264", "-profile:v high", "-pix_fmt yuv420p"} {
+	for _, value := range []string{
+		"zscale=t=linear:npl=100", "tonemap=hable", "zscale=t=bt709:m=bt709:p=bt709:r=tv",
+		"-c:v libx264", "-profile:v high", "-pix_fmt yuv420p",
+		"-color_primaries bt709", "-color_trc bt709", "-colorspace bt709", "-color_range tv",
+	} {
 		if !strings.Contains(joined, value) {
 			t.Fatalf("args missing %q: %s", value, joined)
 		}
@@ -266,7 +270,7 @@ func TestBuildSpriteKeyframeExtractArgs(t *testing.T) {
 		t.Fatalf("BuildSpriteKeyframeExtractArgs: %v", err)
 	}
 	joined := strings.Join(args, " ")
-	for _, value := range []string{"-threads 2", "-ss 10.2", "-skip_frame nokey", "-map 0:0", "select='eq(n,0)+eq(n,4)+eq(n,9)'", "tonemap=hable", "scale=320:180", "-frames:v 3", "frame_%06d.png"} {
+	for _, value := range []string{"-threads 2", "-ss 10.2", "-skip_frame nokey", "-map 0:0", "select='eq(n,0)+eq(n,4)+eq(n,9)'", "tonemap=hable", "zscale=t=bt709:m=bt709:p=bt709:r=tv", "scale=320:180", "-frames:v 3", "frame_%06d.png"} {
 		if !strings.Contains(joined, value) {
 			t.Fatalf("args missing %q: %s", value, joined)
 		}

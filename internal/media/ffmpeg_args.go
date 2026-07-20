@@ -254,7 +254,8 @@ func BuildSpriteKeyframeExtractArgs(spec SpriteKeyframeExtractSpec) ([]string, e
 	filters := []string{fmt.Sprintf("select='%s'", strings.Join(selectTerms, "+"))}
 	scale := spriteScaleFilter(spec.Width, spec.Height)
 	if spriteNeedsToneMap(spec.DynamicRange) {
-		filters = append(filters, "zscale=t=linear:npl=100", "tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", scale)
+		filters = append(filters, hdrToSDRFilterChain()...)
+		filters = append(filters, scale)
 	} else {
 		filters = append(filters, scale)
 	}
