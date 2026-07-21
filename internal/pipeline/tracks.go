@@ -28,6 +28,16 @@ func (e *Executor) selectAudio(ctx context.Context, request task.Request, step s
 	if len(selections) == 0 {
 		return task.NewError(task.ErrNoPlayableAudio, "no audio tracks matched the selection policy", false)
 	}
+	var compatibilityFallbacks []media.AudioSelection
+	for index := range selections {
+		selection := selections[index]
+		if media.CanCopyAudioToHLS(selection.Source.Codec) {
+			continue
+		}
+		fallback := media.NewAACAudioSelection(selection.Source, e.opt.AudioChannels)
+		selections[index] = fallback
+		compatibilityFallbacks = append(compatibilityFallbacks, fallback)
+	}
 	e.setStepProgress(request.TaskUUID, step.Name, 5)
 	outputs := make([]media.AudioTranscodeOutput, 0, len(selections))
 	artifactSpecs := make([]state.ArtifactSpec, 0, len(selections))
@@ -52,6 +62,20 @@ func (e *Executor) selectAudio(ctx context.Context, request task.Request, step s
 	}
 	if err := e.recordArtifactSpecs(ctx, request, artifactSpecs); err != nil {
 		return err
+	}
+	for _, fallback := range compatibilityFallbacks {
+		_ = e.repo.AddWarning(ctx, request.TaskUUID, state.WarningSpec{
+			StepName: step.Name, Code: "AUDIO_TRANSCODED_FOR_HLS_COMPATIBILITY",
+			Message: "source audio codec is not supported by the MP4/HLS output and was transcoded to AAC",
+			Details: map[string]any{
+				"source_track_index": fallback.Source.Index,
+				"source_codec":       media.NormalizeAudioCodec(fallback.Source.Codec),
+				"output_codec":       fallback.OutputCodec,
+				"output_profile":     fallback.OutputProfile,
+				"output_channels":    fallback.OutputChannels,
+				"output_bitrate":     fallback.OutputBitrate,
+			},
+		})
 	}
 	e.setStepProgress(request.TaskUUID, step.Name, 96)
 	return nil
@@ -104,7 +128,7 @@ func (e *Executor) transcodeAudioAAC(ctx context.Context, request task.Request, 
 	var outputs []media.AudioFileTranscodeOutput
 	var artifactSpecs []state.ArtifactSpec
 	for _, source := range sources {
-		if media.NormalizeAudioCodec(source.Selection.Source.Codec) == "aac" {
+		if audioOutputCodec(source.Selection) == "aac" {
 			continue
 		}
 		selection := media.NewAACAudioSelection(source.Selection.Source, e.opt.AudioChannels)

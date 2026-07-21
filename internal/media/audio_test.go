@@ -29,3 +29,16 @@ func TestNewAACAudioSelectionUsesChannelAwareBitrate(t *testing.T) {
 		t.Fatalf("unexpected stereo AAC selection: %+v", stereo)
 	}
 }
+
+func TestCanCopyAudioToHLS(t *testing.T) {
+	for _, codec := range []string{"aac", "ac3", "eac3"} {
+		if !CanCopyAudioToHLS(codec) {
+			t.Fatalf("codec %s should be copied to HLS", codec)
+		}
+	}
+	for _, codec := range []string{"truehd", "dts", "flac", "opus"} {
+		if CanCopyAudioToHLS(codec) {
+			t.Fatalf("codec %s should be transcoded for HLS", codec)
+		}
+	}
+}

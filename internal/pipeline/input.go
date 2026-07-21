@@ -85,11 +85,14 @@ func (e *Executor) validateInput(ctx context.Context, request task.Request) erro
 	if err != nil {
 		return err
 	}
-	if details, ok := dolbyVisionProbeDetails(probe); ok {
-		return taskErrorWithDetails(task.ErrUnsupportedDolbyVision, "Dolby Vision video is not supported by this worker", false, details)
-	}
 	if (request.Steps.Video.Enabled || request.Steps.Sprites.Enabled) && len(probe.VideoStreams) == 0 {
 		return task.NewError(task.ErrUnsupportedMedia, "input has no video stream", false)
+	}
+	if request.Steps.Video.Enabled || request.Steps.Sprites.Enabled {
+		source, _ := primaryVideoStream(probe.VideoStreams)
+		if (source.DolbyVision || source.DynamicRange == media.DynamicRangeDolby) && !source.DolbyVisionHDR10Compatible {
+			return taskErrorWithDetails(task.ErrUnsupportedDolbyVision, "Dolby Vision video has no supported HDR10-compatible base layer", false, dolbyVisionStreamDetails(source))
+		}
 	}
 	if request.Steps.Audio.Enabled && len(probe.AudioStreams) == 0 {
 		return task.NewError(task.ErrNoPlayableAudio, "input has no audio stream", false)

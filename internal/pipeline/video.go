@@ -40,13 +40,11 @@ func (e *Executor) generateVideo(ctx context.Context, request task.Request, step
 	if !ok {
 		return task.NewError(task.ErrUnsupportedMedia, "input has no video stream", false)
 	}
-	if source.DolbyVision || source.DynamicRange == media.DynamicRangeDolby {
-		return taskErrorWithDetails(task.ErrUnsupportedDolbyVision, "Dolby Vision video cannot be transcoded or used for direct sprite extraction", false, map[string]any{
-			"source_track_index": source.Index,
-			"codec":              source.Codec,
-			"dynamic_range":      source.DynamicRange,
-		})
+	processingSource, ok := media.VideoStreamForProcessing(source)
+	if !ok {
+		return taskErrorWithDetails(task.ErrUnsupportedDolbyVision, "Dolby Vision video has no supported HDR10-compatible base layer", false, dolbyVisionStreamDetails(source))
 	}
+	source = processingSource
 	profiles, err := generatedVideoProfiles(request, source)
 	if err != nil {
 		return err
@@ -151,7 +149,12 @@ func (e *Executor) packageSourceVideo(ctx context.Context, request task.Request,
 	if !ok {
 		return task.NewError(task.ErrUnsupportedMedia, "input has no video stream", false)
 	}
-	return e.remuxSourceVideo(ctx, request, step, source, packageVideoProfile(source), probe.Format.Duration, videoProfilesInclude(request.Steps.Video.Profiles, "package"))
+	processingSource, ok := media.VideoStreamForProcessing(source)
+	if !ok {
+		return taskErrorWithDetails(task.ErrUnsupportedDolbyVision, "Dolby Vision video has no supported HDR10-compatible base layer", false, dolbyVisionStreamDetails(source))
+	}
+	stripDolbyVision := source.DolbyVision || source.DynamicRange == media.DynamicRangeDolby
+	return e.remuxSourceVideo(ctx, request, step, source, packageVideoProfile(processingSource), probe.Format.Duration, videoProfilesInclude(request.Steps.Video.Profiles, "package"), stripDolbyVision)
 }
 
 func generatedVideoTiming() (time.Duration, float64) {
@@ -293,14 +296,17 @@ func taskRelativePath(request task.Request, relativePath string) (string, error)
 	return path, nil
 }
 
-func (e *Executor) remuxSourceVideo(ctx context.Context, request task.Request, step state.StepRecord, source media.VideoStream, profile media.VideoProfile, duration float64, deriveSegmentTiming bool) error {
+func (e *Executor) remuxSourceVideo(ctx context.Context, request task.Request, step state.StepRecord, source media.VideoStream, profile media.VideoProfile, duration float64, deriveSegmentTiming, stripDolbyVision bool) error {
 	relativePath := filepath.ToSlash(filepath.Join("tmp", "video", videoOutputName(profile)))
 	outputPath := filepath.Join(taskRoot(request), filepath.FromSlash(relativePath))
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
 		return task.NewError(task.ErrVideoTranscodeFailed, err.Error(), true)
 	}
 	e.setStepProgress(request.TaskUUID, step.Name, 5)
-	args, err := media.BuildVideoRemuxArgs(media.VideoRemuxSpec{Input: preparedInputPath(request), Output: outputPath, SourceIndex: source.Index, Codec: source.Codec, Threads: max(1, e.opt.CPULimit)})
+	args, err := media.BuildVideoRemuxArgs(media.VideoRemuxSpec{
+		Input: preparedInputPath(request), Output: outputPath, SourceIndex: source.Index,
+		Codec: source.Codec, Threads: max(1, e.opt.CPULimit), StripDolbyVision: stripDolbyVision,
+	})
 	if err != nil {
 		return task.NewError(task.ErrVideoTranscodeFailed, err.Error(), false)
 	}
@@ -321,7 +327,20 @@ func (e *Executor) remuxSourceVideo(ctx context.Context, request task.Request, s
 		SourceIndex: source.Index, Profile: profile, Mode: "remux",
 		SegmentDurationSeconds: seconds(segmentDuration), GOPSeconds: gopSeconds,
 	}
-	return e.recordArtifact(ctx, request, state.ArtifactSpec{StepName: step.Name, Kind: "video_intermediate", RelativePath: relativePath, Committed: true, Metadata: metadata})
+	if stripDolbyVision {
+		metadata.InputMode = "dolby_vision_hdr10_base_layer"
+	}
+	if err := e.recordArtifact(ctx, request, state.ArtifactSpec{StepName: step.Name, Kind: "video_intermediate", RelativePath: relativePath, Committed: true, Metadata: metadata}); err != nil {
+		return err
+	}
+	if stripDolbyVision {
+		_ = e.repo.AddWarning(ctx, request.TaskUUID, state.WarningSpec{
+			StepName: step.Name, Code: "DOLBY_VISION_CONVERTED_TO_HDR10",
+			Message: "Dolby Vision enhancement data was removed and the HDR10-compatible base layer was preserved without re-encoding",
+			Details: dolbyVisionStreamDetails(source),
+		})
+	}
+	return nil
 }
 
 func (e *Executor) sourceSegmentDurationErrorDetails(request task.Request, source media.VideoStream) map[string]any {

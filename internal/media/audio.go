@@ -130,6 +130,15 @@ func NewAACAudioSelection(source AudioTrack, maxChannels int) AudioSelection {
 	}
 }
 
+func CanCopyAudioToHLS(codec string) bool {
+	switch NormalizeAudioCodec(codec) {
+	case "aac", "ac3", "eac3":
+		return true
+	default:
+		return false
+	}
+}
+
 func DefaultAACBitrate(channels int) int64 {
 	switch {
 	case channels <= 1:

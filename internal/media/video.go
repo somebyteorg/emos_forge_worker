@@ -42,6 +42,17 @@ type VideoProfile struct {
 	BitrateEstimated bool         `json:"bitrate_estimated"`
 }
 
+func VideoStreamForProcessing(stream VideoStream) (VideoStream, bool) {
+	if !stream.DolbyVision && stream.DynamicRange != DynamicRangeDolby {
+		return stream, true
+	}
+	if !stream.DolbyVisionHDR10Compatible {
+		return VideoStream{}, false
+	}
+	stream.DynamicRange = DynamicRangeHDR10
+	return stream, true
+}
+
 type profileLimit struct {
 	name       string
 	width      int

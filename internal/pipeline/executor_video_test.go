@@ -146,6 +146,61 @@ func TestExecutorConvertsHDR720pToEightBitSDR(t *testing.T) {
 	t.Fatalf("video intermediate artifact not found: %+v", artifacts)
 }
 
+func TestExecutorConvertsCompatibleDolbyVisionToHDR10BaseLayer(t *testing.T) {
+	db := openExecutorDB(t)
+	input := filepath.Join(t.TempDir(), "source.mkv")
+	writeTestFile(t, input, []byte("media"))
+	request := videoExecutorRequest(t, input, []string{"package", "720p"})
+	ensureExecutorPlan(t, db, request)
+
+	runner := &recordingCommandRunner{fakeCommandRunner: fakeCommandRunner{t: t}}
+	if err := NewExecutor(db, Options{
+		ProbeRunner: fakeProbeRunner{
+			stdout: dolbyVisionProfile7ProbeJSON(3840, 2160), keyframesStdout: keyframesJSON(0, 3, 6, 9, 12),
+		},
+		CommandRunner: runner, RetryInitial: time.Millisecond,
+	}).Run(context.Background(), request); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(runner.ffmpegVideoRemuxArgs) != 1 || !containsArgPair(runner.ffmpegVideoRemuxArgs[0], "-bsf:v", "filter_units=remove_types=62|63") {
+		t.Fatalf("Dolby Vision package remux did not extract the HDR10 base layer: %#v", runner.ffmpegVideoRemuxArgs)
+	}
+	generateArgs := generatedVideoCommandArgs(runner.ffmpegVideoTranscodeArgs)
+	if !strings.Contains(strings.Join(generateArgs, " "), "tonemap=hable") {
+		t.Fatalf("Dolby Vision HDR10 base layer was not treated as HDR for 720p output: %#v", generateArgs)
+	}
+
+	artifacts, err := db.ListArtifacts(context.Background(), request.TaskUUID)
+	if err != nil {
+		t.Fatalf("ListArtifacts: %v", err)
+	}
+	var packageMetadata videoIntermediateMetadata
+	for _, artifact := range artifacts {
+		if artifact.Kind == "video_intermediate" && artifact.RelativePath == "tmp/video/video_package.mp4" {
+			packageMetadata, err = videoIntermediateMetadataFromArtifact(artifact)
+			if err != nil {
+				t.Fatalf("videoIntermediateMetadataFromArtifact: %v", err)
+			}
+		}
+	}
+	if packageMetadata.Profile.DynamicRange != media.DynamicRangeHDR10 || packageMetadata.InputMode != "dolby_vision_hdr10_base_layer" {
+		t.Fatalf("unexpected Dolby Vision package metadata: %+v", packageMetadata)
+	}
+	warnings, err := db.ListWarnings(context.Background(), request.TaskUUID)
+	if err != nil {
+		t.Fatalf("ListWarnings: %v", err)
+	}
+	foundConversionWarning := false
+	for _, warning := range warnings {
+		if warning.Code == "DOLBY_VISION_CONVERTED_TO_HDR10" {
+			foundConversionWarning = true
+		}
+	}
+	if !foundConversionWarning {
+		t.Fatalf("unexpected Dolby Vision conversion warnings: %+v", warnings)
+	}
+}
+
 func TestExecutor720pHalvesHighSourceFrameRate(t *testing.T) {
 	db := openExecutorDB(t)
 	input := filepath.Join(t.TempDir(), "source.mov")

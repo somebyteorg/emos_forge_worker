@@ -36,6 +36,7 @@ func ParseProbe(data []byte) (Probe, error) {
 
 func normalizeVideo(stream ffprobeStream) VideoStream {
 	dolby := isDolbyVision(stream)
+	dolbyConfiguration := parseDolbyVisionConfiguration(stream)
 	hdr10Plus := hasHDR10Plus(stream)
 	dynamicRange := classifyDynamicRange(stream, dolby, hdr10Plus)
 	return VideoStream{
@@ -44,7 +45,12 @@ func normalizeVideo(stream ffprobeStream) VideoStream {
 		FrameRate:      parseFrameRate(firstNonEmpty(stream.AverageFrameRate, stream.RealFrameRate)),
 		AverageBitrate: parseInt64(stream.BitRate), BitDepth: parseBitDepth(stream), PixelFormat: stream.PixelFormat,
 		ColorPrimaries: stream.ColorPrimaries, ColorTransfer: stream.ColorTransfer, ColorSpace: stream.ColorSpace, ColorRange: stream.ColorRange,
-		DynamicRange: dynamicRange, DolbyVision: dolby, HDR10Plus: hdr10Plus, Default: disposition(stream, "default"),
+		DynamicRange: dynamicRange, DolbyVision: dolby,
+		DolbyVisionProfile: dolbyConfiguration.Profile, DolbyVisionLevel: dolbyConfiguration.Level,
+		DolbyVisionBaseLayer: dolbyConfiguration.BaseLayer, DolbyVisionEnhancementLayer: dolbyConfiguration.EnhancementLayer,
+		DolbyVisionRPU: dolbyConfiguration.RPU, DolbyVisionCompatibilityID: dolbyConfiguration.CompatibilityID,
+		DolbyVisionHDR10Compatible: dolbyVisionHDR10Compatible(stream, dolbyConfiguration),
+		HDR10Plus:                  hdr10Plus, Default: disposition(stream, "default"),
 	}
 }
 

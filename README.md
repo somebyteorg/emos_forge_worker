@@ -90,7 +90,7 @@ EMOS_FORGE_WORKER_ID=
 | `--video` | 是否启用视频处理，默认 `true`；关闭用 `--video=false`。 |
 | `--video-profiles` | 视频规则，逗号分隔。支持 `package`、`720p`、`1080p`、`2160p`；默认 `package`。 |
 | `--audio` | 是否启用音频处理，默认 `true`；关闭用 `--audio=false`。 |
-| `--audio-rules` | 音频规则，逗号分隔。支持 `package`、`aac`、`none`；默认 `package,aac`。`package` 会封装原始音轨，`aac` 会将选中的非 AAC 音轨转为 AAC；`package,aac` 会同时输出原轨和 AAC，两者都不是 `/tmp` 产物。 |
+| `--audio-rules` | 音频规则，逗号分隔。支持 `package`、`aac`、`none`；默认 `package,aac`。`package` 会保留适合 MP4/HLS 的 AAC、AC-3、E-AC-3 原始音轨；TrueHD、DTS、FLAC、Opus 等不兼容编码会直接转为 AAC LC。`package,aac` 会在原轨兼容时同时输出原轨和 AAC，两者都不是 `/tmp` 产物。 |
 | `--audio-strategy` | 音轨选择策略，默认 `one_per_language`。 |
 | `--sprites` | 是否生成雪碧图，默认 `true`；关闭用 `--sprites=false`。 |
 | `--sprite-sizes` | 雪碧图尺寸，逗号分隔，默认 `1280x720,640x360,320x180`。 |
@@ -134,7 +134,7 @@ worker 模式下，后台通过 `job_steps` 指定要处理的内容：
 | 类型 | 默认规则 |
 | --- | --- |
 | 视频 | 策略为 `source_aware`。所有视频任务先把源视频轨无损 remux 为 package 标准输入；只有明确请求 `package` 时才把它加入最终 HLS。生成档位从该标准输入读取，不会放大视频，源宽高都小于目标档位时会跳过。 |
-| 音频 | 策略为 `one_per_language`。每种语言、每种角色选一条最佳音轨，优先默认音轨，其次声道数、码率、轨道序号。`audio_package` 保留原始音频编码；额外请求 `audio_aac` 时，非 AAC 音轨会转为 AAC LC。默认不包含 commentary 和 visual impaired，AAC 输出最大 6 声道。 |
+| 音频 | 策略为 `one_per_language`。每种语言、每种角色选一条最佳音轨，优先默认音轨，其次声道数、码率、轨道序号。`audio_package` 保留兼容 MP4/HLS 的 AAC、AC-3、E-AC-3；TrueHD、DTS、FLAC、Opus 等直接转 AAC LC。额外请求 `audio_aac` 时，其余非 AAC 音轨也会转为 AAC LC。默认不包含 commentary 和 visual impaired，AAC 输出最大 6 声道。 |
 | 字幕 | `local` 模式默认启用，worker 模式由 `subtitle_package` 启用。只处理文本字幕并输出 WebVTT，图片字幕会跳过。所有文本字幕会在一次 ffmpeg 输入中输出。 |
 | 雪碧图 | 基于关键帧生成。从 3 秒后开始，按固定 `10s` 间隔选择最接近的关键帧。 |
 
@@ -147,7 +147,7 @@ worker 模式下，后台通过 `job_steps` 指定要处理的内容：
 | `1080p` | 最大 `1920x1080`，输出 HEVC Main/Main10，SDR 平均码率上限 `6 Mbps`，HDR 平均码率上限 `7 Mbps`，峰值 `10 Mbps`。 |
 | `2160p` | 代码支持最大 `3840x2160`，输出 HEVC，SDR 平均码率上限 `16 Mbps`，HDR 平均码率上限 `20 Mbps`；当前 worker 接口没有对应 job step。 |
 
-720p 源帧率超过 30fps 时会减半输出。不支持 Dolby Vision。
+720p 源帧率超过 30fps 时会减半输出。Dolby Vision Profile 7 以及带 HDR10 兼容基础层的 Profile 8.1 会先无损移除 RPU/增强层，以标准 HDR10 基础层进入后续封装、转码和雪碧图流程；没有 HDR10 兼容基础层的 Dolby Vision 仍会拒绝处理。
 
 ## 输出目录
 

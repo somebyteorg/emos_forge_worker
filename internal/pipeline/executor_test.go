@@ -741,6 +741,7 @@ type recordingCommandRunner struct {
 	ffmpegAudioArgs          [][]string
 	ffmpegSubtitleArgs       [][]string
 	ffmpegExtractArgs        [][]string
+	ffmpegVideoRemuxArgs     [][]string
 	ffmpegVideoTranscodeArgs [][]string
 	packagerArgs             [][]string
 	vipsJoins                int
@@ -761,6 +762,9 @@ func (r *recordingCommandRunner) Run(ctx context.Context, spec runner.Spec) (run
 	if strings.Contains(joined, "frame_%06d.") {
 		r.ffmpegFrameExtracts++
 		r.ffmpegExtractArgs = append(r.ffmpegExtractArgs, append([]string(nil), spec.Args...))
+	}
+	if spec.Name == "ffmpeg" && strings.Contains(joined, "tmp/video/video_package.mp4") && containsArgPair(spec.Args, "-c:v", "copy") {
+		r.ffmpegVideoRemuxArgs = append(r.ffmpegVideoRemuxArgs, append([]string(nil), spec.Args...))
 	}
 	if spec.Name == "ffmpeg" && strings.Contains(joined, "-filter_complex") && strings.Contains(joined, "video_") && strings.Contains(joined, ".mp4") && !strings.Contains(joined, "frame_") {
 		r.ffmpegVideoTranscodeArgs = append(r.ffmpegVideoTranscodeArgs, append([]string(nil), spec.Args...))
@@ -1234,6 +1238,16 @@ func sourceAudioProbeJSON() string {
 }`
 }
 
+func trueHDSourceAudioProbeJSON() string {
+	return `{
+  "format":{"format_name":"matroska","duration":"12.0","size":"1234","bit_rate":"54000000","probe_score":100},
+  "streams":[
+    {"index":0,"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"pix_fmt":"yuv420p","avg_frame_rate":"24000/1001"},
+    {"index":1,"codec_type":"audio","codec_name":"truehd","profile":"Dolby TrueHD + Dolby Atmos","sample_rate":"48000","channels":8,"channel_layout":"7.1","bit_rate":"2740623","tags":{"language":"eng"},"disposition":{"default":1}}
+  ]
+}`
+}
+
 func multiAudioProbeJSON() string {
 	return `{
   "format":{"format_name":"matroska","duration":"12.0","size":"1234","bit_rate":"8000","probe_score":100},
@@ -1294,6 +1308,15 @@ func hdrVideoProbeJSON(width, height int) string {
   "format":{"format_name":"mov,mp4","duration":"12.0","size":"1234","bit_rate":"12000000","probe_score":100},
   "streams":[
     {"index":0,"codec_type":"video","codec_name":"hevc","profile":"Main 10","width":%d,"height":%d,"pix_fmt":"yuv420p10le","avg_frame_rate":"24000/1001","color_transfer":"smpte2084","color_primaries":"bt2020","color_space":"bt2020nc"}
+  ]
+}`, width, height)
+}
+
+func dolbyVisionProfile7ProbeJSON(width, height int) string {
+	return fmt.Sprintf(`{
+  "format":{"format_name":"matroska,webm","duration":"12.0","size":"1234","bit_rate":"54000000","probe_score":100},
+  "streams":[
+    {"index":0,"codec_type":"video","codec_name":"hevc","profile":"Main 10","width":%d,"height":%d,"pix_fmt":"yuv420p10le","avg_frame_rate":"24000/1001","color_transfer":"smpte2084","color_primaries":"bt2020","color_space":"bt2020nc","side_data_list":[{"side_data_type":"DOVI configuration record","dv_profile":7,"dv_level":6,"rpu_present_flag":1,"el_present_flag":1,"bl_present_flag":1,"dv_bl_signal_compatibility_id":6}]}
   ]
 }`, width, height)
 }

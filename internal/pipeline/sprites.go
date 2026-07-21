@@ -121,11 +121,18 @@ func (e *Executor) selectSpriteInputs(ctx context.Context, request task.Request,
 	appendSpriteInputCandidate(&candidates, seen, spriteInput{
 		Path:         preparedInputPath(request),
 		SourceIndex:  source.Index,
-		DynamicRange: source.DynamicRange,
+		DynamicRange: spriteSourceDynamicRange(source),
 		Mode:         "source",
 		Profile:      "",
 	})
 	return candidates, nil
+}
+
+func spriteSourceDynamicRange(source media.VideoStream) media.DynamicRange {
+	if processingSource, ok := media.VideoStreamForProcessing(source); ok {
+		return processingSource.DynamicRange
+	}
+	return source.DynamicRange
 }
 
 func appendSpriteInputCandidate(candidates *[]spriteInput, seen map[string]bool, input spriteInput) {

@@ -33,8 +33,51 @@ func TestParseProbeDetectsDolbyVision(t *testing.T) {
 	if probe.VideoStreams[0].DynamicRange != DynamicRangeDolby {
 		t.Fatalf("dynamic range = %s", probe.VideoStreams[0].DynamicRange)
 	}
+	if probe.VideoStreams[0].DolbyVisionHDR10Compatible {
+		t.Fatalf("profile 5 must not be treated as HDR10 compatible: %+v", probe.VideoStreams[0])
+	}
 	if probe.VideoStreams[0].FrameRate < 23.97 || probe.VideoStreams[0].FrameRate > 23.98 {
 		t.Fatalf("frame rate = %f", probe.VideoStreams[0].FrameRate)
+	}
+}
+
+func TestParseProbeDetectsDolbyVisionProfile7HDR10BaseLayer(t *testing.T) {
+	probe, err := ParseProbe([]byte(`{
+  "streams": [{
+    "index": 0,
+    "codec_type": "video",
+    "codec_name": "hevc",
+    "profile": "Main 10",
+    "width": 3840,
+    "height": 2160,
+    "pix_fmt": "yuv420p10le",
+    "color_primaries": "bt2020",
+    "color_transfer": "smpte2084",
+    "color_space": "bt2020nc",
+    "side_data_list": [{
+      "side_data_type": "DOVI configuration record",
+      "dv_profile": 7,
+      "dv_level": 6,
+      "rpu_present_flag": 1,
+      "el_present_flag": 1,
+      "bl_present_flag": 1,
+      "dv_bl_signal_compatibility_id": 6
+    }]
+  }]
+}`))
+	if err != nil {
+		t.Fatalf("ParseProbe: %v", err)
+	}
+	video := probe.VideoStreams[0]
+	if !video.DolbyVision || !video.DolbyVisionHDR10Compatible || video.DolbyVisionProfile != 7 || video.DolbyVisionLevel != 6 {
+		t.Fatalf("profile 7 compatibility was not parsed: %+v", video)
+	}
+	if !video.DolbyVisionBaseLayer || !video.DolbyVisionEnhancementLayer || !video.DolbyVisionRPU || video.DolbyVisionCompatibilityID != 6 {
+		t.Fatalf("profile 7 layer flags were not parsed: %+v", video)
+	}
+	processing, ok := VideoStreamForProcessing(video)
+	if !ok || processing.DynamicRange != DynamicRangeHDR10 {
+		t.Fatalf("profile 7 processing stream = %+v, compatible=%t", processing, ok)
 	}
 }
 

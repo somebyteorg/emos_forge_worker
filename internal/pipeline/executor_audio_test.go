@@ -261,6 +261,61 @@ func TestExecutorAudioAACTranscodesNonAACSelection(t *testing.T) {
 	}
 }
 
+func TestExecutorTranscodesTrueHDDirectlyToAACForHLS(t *testing.T) {
+	db := openExecutorDB(t)
+	input := filepath.Join(t.TempDir(), "source.mkv")
+	writeTestFile(t, input, []byte("media"))
+	request := packageExecutorRequest(t, input)
+	request.TaskUUID = "019f61e1-eb9d-7a90-adba-3a6f7ecc8620"
+	request.Steps.Audio.AAC = true
+	ensureExecutorPlan(t, db, request)
+
+	runner := &recordingCommandRunner{fakeCommandRunner: fakeCommandRunner{t: t}}
+	if err := NewExecutor(db, Options{
+		ProbeRunner:   fakeProbeRunner{stdout: trueHDSourceAudioProbeJSON(), keyframesStdout: keyframesJSON(0, 2.5, 5, 7.5, 10)},
+		CommandRunner: runner, CPULimit: 4, RetryInitial: time.Millisecond,
+	}).Run(context.Background(), request); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(runner.ffmpegAudioArgs) != 1 {
+		t.Fatalf("TrueHD should be converted directly in audio_select, commands=%#v", runner.ffmpegAudioArgs)
+	}
+	audioArgs := strings.Join(runner.ffmpegAudioArgs[0], " ")
+	for _, value := range []string{"-map 0:1", "-c:a aac", "-profile:a aac_low", "-b:a 384000", "-ac 6", "audio_01_eng_aac.m4a"} {
+		if !strings.Contains(audioArgs, value) {
+			t.Fatalf("TrueHD fallback command missing %q: %s", value, audioArgs)
+		}
+	}
+	if strings.Contains(audioArgs, "truehd.mp4") || strings.Contains(audioArgs, "-c:a copy") {
+		t.Fatalf("TrueHD must not be copied into MP4: %s", audioArgs)
+	}
+
+	states := stepStateMap(mustListSteps(t, db, request.TaskUUID))
+	if states[StepAudioSelect] != string(task.StepSucceeded) || states[StepAudioAAC] != string(task.StepSkipped) || states[StepAudioPackage] != string(task.StepSucceeded) {
+		t.Fatalf("unexpected TrueHD audio states: %+v", states)
+	}
+	artifacts, err := db.ListArtifacts(context.Background(), request.TaskUUID)
+	if err != nil {
+		t.Fatalf("ListArtifacts: %v", err)
+	}
+	if !slices.Contains(artifactPathsByKind(artifacts, "audio_intermediate"), "tmp/audio/audio_01_eng_aac.m4a") || !slices.Contains(artifactPathsByKind(artifacts, "audio_packaged"), "audio/01_eng_aac/init.mp4") {
+		t.Fatalf("AAC fallback artifacts are missing: %+v", artifacts)
+	}
+	warnings, err := db.ListWarnings(context.Background(), request.TaskUUID)
+	if err != nil {
+		t.Fatalf("ListWarnings: %v", err)
+	}
+	foundFallbackWarning := false
+	for _, warning := range warnings {
+		if warning.Code == "AUDIO_TRANSCODED_FOR_HLS_COMPATIBILITY" {
+			foundFallbackWarning = true
+		}
+	}
+	if !foundFallbackWarning {
+		t.Fatalf("TrueHD AAC fallback warning is missing: %+v", warnings)
+	}
+}
+
 func TestExecutorAudioAACTranscodesSelectionsInOneFFmpegCommand(t *testing.T) {
 	db := openExecutorDB(t)
 	input := filepath.Join(t.TempDir(), "source.mkv")

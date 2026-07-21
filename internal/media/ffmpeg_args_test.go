@@ -188,6 +188,8 @@ func TestBuildVideoGenerateArgsToneMapsCompatibilityOutput(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, value := range []string{
 		"zscale=t=linear:npl=100", "tonemap=hable", "zscale=t=bt709:m=bt709:p=bt709:r=tv",
+		"sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA", "sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL",
+		"sidedata=mode=delete:type=DYNAMIC_HDR_PLUS", "sidedata=mode=delete:type=DOVI_RPU_BUFFER", "sidedata=mode=delete:type=DOVI_METADATA",
 		"-c:v libx264", "-profile:v high", "-pix_fmt yuv420p",
 		"-color_primaries bt709", "-color_trc bt709", "-colorspace bt709", "-color_range tv",
 	} {
@@ -202,9 +204,22 @@ func TestBuildVideoRemuxArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildVideoRemuxArgs: %v", err)
 	}
-	want := []string{"-hide_banner", "-nostdin", "-y", "-threads", "4", "-i", "/input.mkv", "-map", "0:0", "-map_chapters", "-1", "-map_metadata", "-1", "-an", "-sn", "-dn", "-c:v", "copy", "/out/source.mp4"}
+	want := []string{"-hide_banner", "-nostdin", "-y", "-threads", "4", "-i", "/input.mkv", "-map", "0:0", "-map_chapters", "-1", "-map_metadata", "-1", "-an", "-sn", "-dn", "-c:v", "copy", "-tag:v", "hvc1", "/out/source.mp4"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v", args)
+	}
+}
+
+func TestBuildVideoRemuxArgsExtractsDolbyVisionHDR10BaseLayer(t *testing.T) {
+	args, err := BuildVideoRemuxArgs(VideoRemuxSpec{
+		Input: "/input.mkv", Output: "/out/source.mp4", SourceIndex: 0,
+		Codec: "hevc", Threads: 4, StripDolbyVision: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildVideoRemuxArgs: %v", err)
+	}
+	if !containsArgPair(args, "-bsf:v", "filter_units=remove_types=62|63") || !containsArgPair(args, "-tag:v", "hvc1") {
+		t.Fatalf("Dolby Vision base-layer extraction args are incomplete: %#v", args)
 	}
 }
 

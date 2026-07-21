@@ -38,11 +38,12 @@ type VideoTranscodeSpec struct {
 }
 
 type VideoRemuxSpec struct {
-	Input       string
-	Output      string
-	SourceIndex int
-	Codec       string
-	Threads     int
+	Input            string
+	Output           string
+	SourceIndex      int
+	Codec            string
+	Threads          int
+	StripDolbyVision bool
 }
 
 type SubtitleConvertOutput struct {
@@ -196,9 +197,17 @@ func BuildVideoRemuxArgs(spec VideoRemuxSpec) ([]string, error) {
 	}
 	args := baseFFmpegArgs(spec.Input, spec.Threads)
 	args = append(args, "-map", streamMap(spec.SourceIndex), "-map_chapters", "-1", "-map_metadata", "-1", "-an", "-sn", "-dn", "-c:v", "copy")
+	if spec.StripDolbyVision {
+		if !strings.EqualFold(strings.TrimSpace(spec.Codec), "hevc") && !strings.EqualFold(strings.TrimSpace(spec.Codec), "h265") {
+			return nil, fmt.Errorf("Dolby Vision base-layer extraction requires HEVC input")
+		}
+		args = append(args, "-bsf:v", "filter_units=remove_types=62|63")
+	}
 	switch strings.ToLower(strings.TrimSpace(spec.Codec)) {
 	case "h264", "avc":
 		args = append(args, "-tag:v", "avc1")
+	case "hevc", "h265":
+		args = append(args, "-tag:v", "hvc1")
 	}
 	args = append(args, spec.Output)
 	return args, nil

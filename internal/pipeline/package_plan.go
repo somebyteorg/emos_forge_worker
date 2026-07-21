@@ -73,7 +73,7 @@ func audioPackageArtifacts(artifacts []state.ArtifactRecord, includePackage bool
 		case "audio_aac_intermediate":
 			include = true
 		case "audio_intermediate":
-			include = includePackage || (media.NormalizeAudioCodec(selection.Source.Codec) == "aac" && !aacBySource[selection.Source.Index])
+			include = includePackage || (audioOutputCodec(selection) == "aac" && !aacBySource[selection.Source.Index])
 		}
 		if !include {
 			continue
