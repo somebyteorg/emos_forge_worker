@@ -15,6 +15,7 @@ import (
 )
 
 func buildLocalRequest(cfg config.Config, taskUUID, input, output, videoProfiles, audioStrategy string, subtitles, audio, audioPackage, audioAAC, video, sprites bool, spriteSizes, spriteFrameFormat string) (task.Request, error) {
+	taskUUID = strings.TrimSpace(taskUUID)
 	if taskUUID == "" {
 		var err error
 		taskUUID, err = task.NewUUIDv7()

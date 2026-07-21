@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"forge_worker/internal/task"
 )
 
 func promptLocal(input, taskUUID, videoProfiles, audioRules, spriteSizes *string, subtitles, audio, video, sprites, encrypt *bool, stdout, stderr io.Writer) error {
@@ -21,21 +23,44 @@ func promptLocalWithTerminal(reader *bufio.Reader, terminalInput *os.File, input
 	fmt.Fprintln(stdout, "Forge Worker Local")
 	if *input == "" {
 		fmt.Fprintln(stdout, "\nInput")
-		fmt.Fprint(stdout, "input path or URL: ")
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
+		for {
+			fmt.Fprint(stdout, "input path or URL: ")
+			line, err := reader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			*input = strings.TrimSpace(line)
+			if *input != "" {
+				break
+			}
+			if errors.Is(err, io.EOF) {
+				return errors.New("input path or URL is required")
+			}
+			fmt.Fprintln(stdout, "invalid input; enter a path or URL")
 		}
-		*input = strings.TrimSpace(line)
 	}
 	if *taskUUID == "" {
 		fmt.Fprintln(stdout, "\nTask")
-		fmt.Fprint(stdout, "task uuid (blank to generate): ")
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
+		for {
+			fmt.Fprint(stdout, "task uuid (blank to generate): ")
+			line, err := reader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			value := strings.TrimSpace(line)
+			if value == "" {
+				value, err = task.NewUUIDv7()
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "generated task uuid: %s\n", value)
+			}
+			if task.ValidUUID(value) {
+				*taskUUID = value
+				break
+			}
+			fmt.Fprintln(stdout, "invalid task uuid; enter a UUID or leave blank to generate one")
 		}
-		*taskUUID = strings.TrimSpace(line)
 	}
 	_ = stderr
 	fmt.Fprintln(stdout, "\nVideo")
@@ -82,16 +107,24 @@ func promptBool(reader *bufio.Reader, output io.Writer, label string, fallback b
 	if fallback {
 		suffix = "y"
 	}
-	fmt.Fprintf(output, "%s [%s]: ", label, suffix)
-	line, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return fallback
+	for {
+		fmt.Fprintf(output, "%s [%s]: ", label, suffix)
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fallback
+		}
+		line = strings.ToLower(strings.TrimSpace(line))
+		switch line {
+		case "":
+			return fallback
+		case "y", "yes", "true", "1":
+			return true
+		case "n", "no", "false", "0":
+			return false
+		default:
+			fmt.Fprintln(output, "invalid value; enter y or n")
+		}
 	}
-	line = strings.ToLower(strings.TrimSpace(line))
-	if line == "" {
-		return fallback
-	}
-	return line == "y" || line == "yes" || line == "true" || line == "1"
 }
 
 func promptText(reader *bufio.Reader, output io.Writer, label, fallback string) string {

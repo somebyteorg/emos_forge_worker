@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"golang.org/x/term"
@@ -27,7 +28,14 @@ func promptVideoProfiles(reader *bufio.Reader, terminalInput *os.File, output io
 		return normalizeVideoProfilesCSV(strings.Join(values, ",")), nil
 	}
 	fmt.Fprintln(output, "video profile options: package, 720p, 1080p")
-	return normalizeVideoProfilesCSV(promptText(reader, output, "selected video profiles", displayVideoProfiles(current))), nil
+	for {
+		value := promptText(reader, output, "selected video profiles", displayVideoProfiles(current))
+		if err := validatePromptVideoProfiles(value); err == nil {
+			return normalizeVideoProfilesCSV(value), nil
+		} else {
+			fmt.Fprintf(output, "invalid video profiles: %v\n", err)
+		}
+	}
 }
 
 func promptAudioRules(reader *bufio.Reader, terminalInput *os.File, output io.Writer, current string) (string, error) {
@@ -40,7 +48,14 @@ func promptAudioRules(reader *bufio.Reader, terminalInput *os.File, output io.Wr
 		return normalizeAudioRulesCSV(strings.Join(values, ",")), nil
 	}
 	fmt.Fprintln(output, "audio rule options: package, aac")
-	return normalizeAudioRulesCSV(promptText(reader, output, "selected audio rules", displayAudioRules(current))), nil
+	for {
+		value := promptText(reader, output, "selected audio rules", displayAudioRules(current))
+		if err := validatePromptAudioRules(value); err == nil {
+			return normalizeAudioRulesCSV(value), nil
+		} else {
+			fmt.Fprintf(output, "invalid audio rules: %v\n", err)
+		}
+	}
 }
 
 func promptSpriteSizes(reader *bufio.Reader, terminalInput *os.File, output io.Writer, current string) (string, error) {
@@ -56,7 +71,79 @@ func promptSpriteSizes(reader *bufio.Reader, terminalInput *os.File, output io.W
 		return strings.Join(values, ","), nil
 	}
 	fmt.Fprintf(output, "sprite size options: %s\n", current)
-	return promptText(reader, output, "selected sprite sizes", current), nil
+	for {
+		value := promptText(reader, output, "selected sprite sizes", current)
+		normalized, err := normalizePromptSpriteSizes(value)
+		if err == nil {
+			return normalized, nil
+		}
+		fmt.Fprintf(output, "invalid sprite sizes: %v\n", err)
+	}
+}
+
+func validatePromptVideoProfiles(value string) error {
+	profiles := splitCSV(value)
+	if len(profiles) == 0 {
+		return errors.New("select at least one profile")
+	}
+	hasAuto := false
+	for _, profile := range profiles {
+		profile = normalizeVideoProfile(profile)
+		switch profile {
+		case "package", "720p", "1080p", "2160p":
+		case "auto":
+			hasAuto = true
+		default:
+			return fmt.Errorf("unknown profile %q", profile)
+		}
+	}
+	if hasAuto && len(profiles) > 1 {
+		return errors.New("auto cannot be combined with other profiles")
+	}
+	return nil
+}
+
+func validatePromptAudioRules(value string) error {
+	rules := splitCSV(value)
+	if len(rules) == 0 {
+		return errors.New("select at least one rule")
+	}
+	hasNone := false
+	for _, rule := range rules {
+		rule = normalizeAudioRule(rule)
+		switch rule {
+		case "package", "aac":
+		case "none":
+			hasNone = true
+		default:
+			return fmt.Errorf("unknown rule %q", rule)
+		}
+	}
+	if hasNone && len(rules) > 1 {
+		return errors.New("none cannot be combined with other rules")
+	}
+	return nil
+}
+
+func normalizePromptSpriteSizes(value string) (string, error) {
+	sizes := splitCSV(value)
+	if len(sizes) == 0 {
+		return "", errors.New("select at least one size")
+	}
+	normalized := make([]string, 0, len(sizes))
+	for _, size := range sizes {
+		left, right, ok := strings.Cut(strings.ToLower(size), "x")
+		if !ok {
+			return "", fmt.Errorf("size %q must use WIDTHxHEIGHT", size)
+		}
+		width, widthErr := strconv.Atoi(strings.TrimSpace(left))
+		height, heightErr := strconv.Atoi(strings.TrimSpace(right))
+		if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+			return "", fmt.Errorf("size %q must contain positive dimensions", size)
+		}
+		normalized = append(normalized, fmt.Sprintf("%dx%d", width, height))
+	}
+	return strings.Join(normalized, ","), nil
 }
 
 func videoProfileChoices(current string) []promptChoice {

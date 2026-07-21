@@ -450,6 +450,7 @@ func TestPromptLocalSubtitles(t *testing.T) {
 		{name: "default enabled", initial: true, input: "", want: true, wantPrompt: "extract text subtitles [y]:"},
 		{name: "can disable", initial: true, input: "n\n", want: false, wantPrompt: "extract text subtitles [y]:"},
 		{name: "can enable", initial: false, input: "y\n", want: true, wantPrompt: "extract text subtitles [n]:"},
+		{name: "retries invalid value", initial: false, input: "maybe\ny\n", want: true, wantPrompt: "invalid value; enter y or n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -464,6 +465,66 @@ func TestPromptLocalSubtitles(t *testing.T) {
 			}
 			if !strings.Contains(output, tt.wantPrompt) {
 				t.Fatalf("subtitle prompt missing %q:\n%s", tt.wantPrompt, output)
+			}
+		})
+	}
+}
+
+func TestPromptLocalGeneratesTaskUUIDWhenBlank(t *testing.T) {
+	fields := promptDefaults("", "")
+	fields.Video = false
+	fields.Audio = false
+	fields.Sprites = false
+
+	output := runPromptForTest(t, &fields, "/input.mkv\n\nn\nn\n\nn\n", nil)
+	if !task.ValidUUID(fields.TaskUUID) {
+		t.Fatalf("generated task uuid is invalid: %q", fields.TaskUUID)
+	}
+	if !strings.Contains(output, "generated task uuid: "+fields.TaskUUID) {
+		t.Fatalf("generated task uuid was not shown:\n%s", output)
+	}
+}
+
+func TestPromptLocalRetriesInvalidTaskUUID(t *testing.T) {
+	fields := promptDefaults("", "")
+	fields.Video = false
+	fields.Audio = false
+	fields.Sprites = false
+
+	output := runPromptForTest(t, &fields, "/input.mkv\ninvalid\n\nn\nn\n\nn\n", nil)
+	if !task.ValidUUID(fields.TaskUUID) {
+		t.Fatalf("generated task uuid is invalid: %q", fields.TaskUUID)
+	}
+	if !strings.Contains(output, "invalid task uuid; enter a UUID or leave blank to generate one") {
+		t.Fatalf("invalid task uuid was not rejected:\n%s", output)
+	}
+}
+
+func TestPromptSelectionsRetryInvalidValues(t *testing.T) {
+	tests := []struct {
+		name       string
+		prompt     func(*bufio.Reader, *os.File, io.Writer, string) (string, error)
+		input      string
+		current    string
+		want       string
+		wantOutput string
+	}{
+		{name: "video", prompt: promptVideoProfiles, input: "4k\n720p,package\n", current: "package", want: "720p,package", wantOutput: "invalid video profiles"},
+		{name: "audio", prompt: promptAudioRules, input: "flac\npackage,aac\n", current: "package,aac", want: "package,aac", wantOutput: "invalid audio rules"},
+		{name: "sprites", prompt: promptSpriteSizes, input: "640x0\n640x360\n", current: defaultSpriteSizes, want: "640x360", wantOutput: "invalid sprite sizes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			got, err := tt.prompt(bufio.NewReader(strings.NewReader(tt.input)), nil, &output, tt.current)
+			if err != nil {
+				t.Fatalf("prompt: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("value = %q, want %q", got, tt.want)
+			}
+			if !strings.Contains(output.String(), tt.wantOutput) {
+				t.Fatalf("retry message missing %q:\n%s", tt.wantOutput, output.String())
 			}
 		})
 	}
