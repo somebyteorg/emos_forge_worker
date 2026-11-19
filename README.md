@@ -63,6 +63,21 @@ EMOS_TOKEN=
 EMOS_FORGE_WORKER_ID=
 ```
 
+### 视频转码设备
+
+在 `.env` 设置 `FORGE_VIDEO_ENCODER`。无显卡机器用默认的 `cpu`，切换设备后重新启动 worker。
+
+| 值 | 编码器 | `FORGE_VIDEO_DEVICE` |
+| --- | --- | --- |
+| `cpu` | libx264 / libx265 | 留空 |
+| `nvenc` | NVIDIA NVENC | 可选 GPU 编号，例如 `0`，默认由 FFmpeg 选择 |
+| `qsv` | Intel Quick Sync | DRM render 节点，默认 `/dev/dri/renderD128` |
+| `vaapi` | VAAPI | DRM render 节点，默认 `/dev/dri/renderD128` |
+
+此配置用于生成 `720p`、`1080p`、`2160p` 视频。NVENC 模式会用源视频试跑 CUDA 硬解、`scale_cuda` 缩放和 NVENC 编码。HDR 转 SDR 还会用 Vulkan 上的 `libplacebo` 做 Hable 色调映射，输出 8 位 BT.709。缩放后的帧经系统内存在 CUDA 和 Vulkan 之间传输。硬解或 GPU 滤镜不可用时，worker 会记录原因，改用 CPU 解码和滤镜，再交给 NVENC 编码。QSV 和 VAAPI 使用 CPU 解码和滤镜。`package` 档直接封装源视频。
+
+容器部署时需要让容器访问对应显卡和驱动。QSV 或 VAAPI 需要暴露 DRM render 节点，并安装对应的 VAAPI 驱动。NVENC 需要 NVIDIA Container Toolkit、支持 NVENC 的 FFmpeg 和容器的 `video` 驱动能力。
+
 ## 使用
 
 检查运行环境：

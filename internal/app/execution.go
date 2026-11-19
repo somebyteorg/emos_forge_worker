@@ -18,6 +18,7 @@ func pipelineOptions(cfg config.Config) pipeline.Options {
 	client := pipeline.NewHTTPClient(cfg.HTTPTimeout, cfg.DownloadConnectTimeout)
 	return pipeline.Options{
 		FFmpegPath:     cfg.FFmpegPath,
+		VideoEncoder:   cfg.VideoEncoder,
 		FFprobePath:    cfg.FFprobePath,
 		PackagerPath:   cfg.PackagerPath,
 		VIPSPath:       cfg.VIPSPath,

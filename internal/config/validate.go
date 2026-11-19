@@ -31,6 +31,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must not be empty", name)
 		}
 	}
+	if err := c.VideoEncoder.Validate(); err != nil {
+		return err
+	}
 	if c.AudioMaxChannels <= 0 {
 		return fmt.Errorf("FORGE_AUDIO_MAX_CHANNELS must be positive")
 	}

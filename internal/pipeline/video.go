@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"forge_worker/internal/media"
+	"forge_worker/internal/runner"
 	"forge_worker/internal/state"
 	"forge_worker/internal/task"
 )
@@ -84,9 +85,13 @@ func (e *Executor) generateVideo(ctx context.Context, request task.Request, step
 			GOPSeconds: gopSeconds, GOPFrameRate: generatedVideoGOPFrameRate(artifact.profile, source),
 			ToneMap: generatedVideoNeedsToneMap(source, artifact.profile),
 		}
-		args, err := media.BuildVideoGenerateArgs(media.VideoGenerateSpec{
-			Input: input.path, SourceIndex: input.sourceIndex, Videos: []media.VideoGenerateOutput{output},
-		})
+		spec := media.VideoGenerateSpec{
+			Input: input.path, SourceIndex: input.sourceIndex, Videos: []media.VideoGenerateOutput{output}, Encoder: e.opt.VideoEncoder,
+		}
+		if err := e.checkGeneratedVideoEncoder(ctx, request.TaskUUID, step.Name, &spec); err != nil {
+			return err
+		}
+		args, err := media.BuildVideoGenerateArgs(spec)
 		if err != nil {
 			return task.NewError(task.ErrVideoTranscodeFailed, err.Error(), false)
 		}
@@ -113,6 +118,71 @@ func (e *Executor) generateVideo(ctx context.Context, request task.Request, step
 		artifactSpecs = append(artifactSpecs, state.ArtifactSpec{StepName: step.Name, Kind: "video_intermediate", RelativePath: artifact.relativePath, Committed: true, Metadata: metadata})
 	}
 	return e.recordArtifactSpecs(ctx, request, artifactSpecs)
+}
+
+func (e *Executor) checkGeneratedVideoEncoder(ctx context.Context, taskUUID, stepName string, spec *media.VideoGenerateSpec) error {
+	encoder := spec.Encoder
+	if !encoder.Hardware() {
+		return nil
+	}
+	output := spec.Videos[0]
+	profile := output.Profile
+	var acceleratedFailure *task.Error
+	acceleration := media.VideoAccelerationCUDA
+	if output.ToneMap {
+		acceleration = media.VideoAccelerationVulkan
+	}
+	accelerationName := strings.ToUpper(string(acceleration))
+	if encoder.Backend == media.VideoEncoderNVENC {
+		spec.Acceleration = acceleration
+		args, err := media.BuildAcceleratedVideoCheckArgs(*spec)
+		if err != nil {
+			return task.NewError(task.ErrVideoTranscodeFailed, err.Error(), false)
+		}
+		acceleratedFailure = e.runVideoEncoderCheck(ctx, args, accelerationName+" video", profile)
+		if acceleratedFailure == nil {
+			return nil
+		}
+		spec.Acceleration = ""
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+
+	args, err := media.BuildVideoEncoderCheckArgs(encoder, profile)
+	if err != nil {
+		return task.NewError(task.ErrVideoTranscodeFailed, err.Error(), false)
+	}
+	if failure := e.runVideoEncoderCheck(ctx, args, encoder.Backend+" encoder", profile); failure != nil {
+		if acceleratedFailure != nil {
+			failure.Details[string(acceleration)+"_check"] = acceleratedFailure.Details
+		}
+		return failure
+	}
+	if acceleratedFailure != nil {
+		_ = e.repo.AddWarning(ctx, taskUUID, state.WarningSpec{
+			StepName: stepName, Code: accelerationName + "_VIDEO_FALLBACK",
+			Message: acceleratedFailure.Message + ". Using software decoding and filters with NVENC.",
+			Details: acceleratedFailure.Details,
+		})
+	}
+	return nil
+}
+
+func (e *Executor) runVideoEncoderCheck(ctx context.Context, args []string, name string, profile media.VideoProfile) *task.Error {
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	result, err := e.opt.CommandRunner.Run(checkCtx, runner.Spec{Name: e.opt.FFmpegPath, Args: args})
+	if err == nil {
+		return nil
+	}
+	message, _, _ := strings.Cut(strings.TrimSpace(result.Stderr), "\n")
+	if message == "" {
+		message = err.Error()
+	}
+	taskErr := task.NewError(task.ErrVideoTranscodeFailed, fmt.Sprintf("%s check failed for %s (%s): %s", name, profile.Name, profile.EncoderProfile, message), false)
+	taskErr.Details = commandFailureDetails(e.opt.FFmpegPath, args, result, err)
+	return taskErr
 }
 
 func (e *Executor) generatedVideoInput(ctx context.Context, request task.Request) (generatedVideoInput, error) {

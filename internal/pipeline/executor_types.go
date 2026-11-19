@@ -17,6 +17,7 @@ type Downloader interface {
 
 type Options struct {
 	FFmpegPath     string
+	VideoEncoder   media.VideoEncoder
 	FFprobePath    string
 	PackagerPath   string
 	VIPSPath       string

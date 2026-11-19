@@ -302,11 +302,12 @@ func IsTextSubtitleCodec(codec string) bool {
 	}
 }
 
-func baseFFmpegArgs(input string, threads int) []string {
+func baseFFmpegArgs(input string, threads int, inputArgs ...string) []string {
 	args := []string{"-hide_banner", "-nostdin", "-y"}
 	if threads > 0 {
 		args = append(args, "-threads", strconv.Itoa(threads))
 	}
+	args = append(args, inputArgs...)
 	return append(args, "-i", input)
 }
 

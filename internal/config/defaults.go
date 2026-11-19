@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"forge_worker/internal/media"
 )
 
 func Defaults() Config {
@@ -27,6 +29,7 @@ func Defaults() Config {
 		RetryInitial:              2 * time.Second,
 		RetryMax:                  5 * time.Minute,
 		FFmpegPath:                "ffmpeg",
+		VideoEncoder:              media.VideoEncoder{Backend: media.VideoEncoderCPU},
 		FFprobePath:               "ffprobe",
 		PackagerPath:              "packager",
 		VIPSPath:                  "vips",

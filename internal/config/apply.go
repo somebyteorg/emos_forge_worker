@@ -13,12 +13,16 @@ func apply(c *Config, values map[string]string) error {
 	stringValue(values, "EMOS_FORGE_WORKER_ID", &c.EMOSForgeWorkerID)
 	stringValue(values, "FORGE_OUTPUT_DIR", &c.OutputDir)
 	stringValue(values, "FORGE_FFMPEG_PATH", &c.FFmpegPath)
+	stringValue(values, "FORGE_VIDEO_ENCODER", &c.VideoEncoder.Backend)
+	stringValue(values, "FORGE_VIDEO_DEVICE", &c.VideoEncoder.Device)
 	stringValue(values, "FORGE_FFPROBE_PATH", &c.FFprobePath)
 	stringValue(values, "FORGE_PACKAGER_PATH", &c.PackagerPath)
 	stringValue(values, "FORGE_VIPS_PATH", &c.VIPSPath)
 	stringValue(values, "FORGE_ENCRYPTION_MODE", &c.EncryptionMode)
 	stringValue(values, "FORGE_SPRITE_FRAME_FORMAT", &c.SpriteFrameFormat)
 	c.EncryptionMode = strings.ToLower(strings.TrimSpace(c.EncryptionMode))
+	c.VideoEncoder.Backend = strings.ToLower(strings.TrimSpace(c.VideoEncoder.Backend))
+	c.VideoEncoder.Device = strings.TrimSpace(c.VideoEncoder.Device)
 	c.SpriteFrameFormat = strings.ToLower(strings.TrimSpace(c.SpriteFrameFormat))
 
 	for key, target := range map[string]*int{

@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"forge_worker/internal/media"
+)
 
 type Config struct {
 	EMOSURL                   string
@@ -17,6 +21,7 @@ type Config struct {
 	RetryInitial              time.Duration
 	RetryMax                  time.Duration
 	FFmpegPath                string
+	VideoEncoder              media.VideoEncoder
 	FFprobePath               string
 	PackagerPath              string
 	VIPSPath                  string

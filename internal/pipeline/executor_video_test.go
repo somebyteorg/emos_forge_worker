@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"forge_worker/internal/media"
+	"forge_worker/internal/runner"
+	"forge_worker/internal/state"
 	"forge_worker/internal/task"
 )
 
@@ -144,6 +147,119 @@ func TestExecutorConvertsHDR720pToEightBitSDR(t *testing.T) {
 		return
 	}
 	t.Fatalf("video intermediate artifact not found: %+v", artifacts)
+}
+
+func TestExecutorSelectsNVENCProcessingPath(t *testing.T) {
+	tests := []struct {
+		name              string
+		probe             string
+		profile           string
+		acceleration      string
+		accelerationFails bool
+		wantFilter        string
+		wantPixelFmt      string
+	}{
+		{
+			name: "main10", probe: hdrVideoProbeJSON(3840, 2160), profile: "1080p",
+			acceleration: "cuda", wantPixelFmt: "cuda",
+			wantFilter: "scale_cuda=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:interp_algo=bicubic:passthrough=0:format=p010le",
+		},
+		{
+			name: "fps reduction", probe: videoProbeJSONWithFrameRate(1920, 1080, "60/1"), profile: "720p",
+			acceleration: "cuda", wantPixelFmt: "cuda", wantFilter: "fps=30,scale_cuda=1280:720",
+		},
+		{
+			name: "unsupported CUDA input", probe: hdrVideoProbeJSON(3840, 2160), profile: "1080p", accelerationFails: true,
+			acceleration: "cuda", wantPixelFmt: "p010le", wantFilter: "scale=1920:1080",
+		},
+		{
+			name: "Vulkan tone map", probe: hdrVideoProbeJSON(3840, 2160), profile: "720p",
+			acceleration: "vulkan", wantPixelFmt: "nv12", wantFilter: "format=p010le,hwdownload,format=p010le,libplacebo=format=nv12:colorspace=bt709:color_trc=bt709:color_primaries=bt709:range=tv:tonemapping=hable",
+		},
+		{
+			name: "Vulkan unavailable", probe: hdrVideoProbeJSON(3840, 2160), profile: "720p", accelerationFails: true,
+			acceleration: "vulkan", wantPixelFmt: "nv12", wantFilter: "tonemap=hable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := openExecutorDB(t)
+			input := filepath.Join(t.TempDir(), "source.mov")
+			writeTestFile(t, input, []byte("media"))
+			request := videoExecutorRequest(t, input, []string{tt.profile})
+			ensureExecutorPlan(t, db, request)
+			commandRunner := &nvencTestRunner{
+				recordingCommandRunner: recordingCommandRunner{fakeCommandRunner: fakeCommandRunner{t: t}},
+				accelerationFails:      tt.accelerationFails,
+			}
+			if err := NewExecutor(db, Options{
+				VideoEncoder:  media.VideoEncoder{Backend: media.VideoEncoderNVENC, Device: "1"},
+				ProbeRunner:   fakeProbeRunner{stdout: tt.probe, keyframesStdout: keyframesJSON(0, 3, 6, 9, 12)},
+				CommandRunner: commandRunner,
+			}).Run(ctx, request); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if commandRunner.checkedAcceleration != tt.acceleration || commandRunner.checkedEncoder != tt.accelerationFails {
+				t.Fatalf("unexpected encoder checks: acceleration=%q software input=%t", commandRunner.checkedAcceleration, commandRunner.checkedEncoder)
+			}
+			if len(commandRunner.ffmpegVideoTranscodeArgs) != 1 {
+				t.Fatalf("expected one transcode, got %d", len(commandRunner.ffmpegVideoTranscodeArgs))
+			}
+			args := commandRunner.ffmpegVideoTranscodeArgs[0]
+			if !strings.Contains(strings.Join(args, " "), tt.wantFilter) || !containsArgPair(args, "-pix_fmt", tt.wantPixelFmt) {
+				t.Fatalf("unexpected transcode args: %v", args)
+			}
+			switch {
+			case tt.accelerationFails:
+				if slices.Contains(args, "-hwaccel") || !containsArgPair(args, "-gpu", "1") {
+					t.Fatalf("software input must use the selected NVENC device: %v", args)
+				}
+			case tt.acceleration == "cuda":
+				if !containsArgPair(args, "-hwaccel_output_format", "cuda") || !containsArgPair(args, "-hwaccel_device", "1") || slices.Index(args, "-hwaccel") >= slices.Index(args, "-i") || slices.Contains(args, "-gpu") {
+					t.Fatalf("CUDA input options must select the GPU before opening the video: %v", args)
+				}
+			case tt.acceleration == "vulkan":
+				if !containsArgPair(args, "-init_hw_device", "cuda=forge_cuda:1") || !containsArgPair(args, "-init_hw_device", "vulkan=forge_vk@forge_cuda") || !containsArgPair(args, "-hwaccel_output_format", "cuda") || !containsArgPair(args, "-gpu", "1") {
+					t.Fatalf("Vulkan and NVENC must use the selected GPU: %v", args)
+				}
+			}
+			warnings, err := db.ListWarnings(ctx, request.TaskUUID)
+			if err != nil {
+				t.Fatalf("ListWarnings: %v", err)
+			}
+			warningCode := strings.ToUpper(tt.acceleration) + "_VIDEO_FALLBACK"
+			hasWarning := slices.ContainsFunc(warnings, func(w state.WarningRecord) bool { return w.Code == warningCode })
+			if hasWarning != tt.accelerationFails {
+				t.Fatalf("unexpected acceleration fallback warning: %v", warnings)
+			}
+		})
+	}
+}
+
+type nvencTestRunner struct {
+	recordingCommandRunner
+	accelerationFails   bool
+	checkedAcceleration string
+	checkedEncoder      bool
+}
+
+func (r *nvencTestRunner) Run(ctx context.Context, spec runner.Spec) (runner.Result, error) {
+	if spec.Name == "ffmpeg" && containsArgPair(spec.Args, "-f", "null") {
+		if index := slices.Index(spec.Args, "-hwaccel"); index >= 0 {
+			r.checkedAcceleration = spec.Args[index+1]
+			if containsArgPair(spec.Args, "-filter_hw_device", "forge_vk") {
+				r.checkedAcceleration = "vulkan"
+			}
+			if r.accelerationFails {
+				return runner.Result{ExitCode: 1, Stderr: "hardware acceleration unavailable"}, errors.New("FFmpeg failed")
+			}
+		} else {
+			r.checkedEncoder = true
+		}
+		return runner.Result{}, nil
+	}
+	return r.recordingCommandRunner.Run(ctx, spec)
 }
 
 func TestExecutorConvertsCompatibleDolbyVisionToHDR10BaseLayer(t *testing.T) {
